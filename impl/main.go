@@ -1,9 +1,11 @@
 package impl
 
 import (
-	"bburli/redis-stream-client/source/types"
+	"bburli/redis-stream-client-go/types"
 	"context"
+	"errors"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -27,6 +29,8 @@ type ReliableRedisStreamClient struct {
 	streamLocks map[string]*types.LBSInfo
 	// serviceName is the name of the service
 	serviceName string
+	// redis pub sub subscription
+	pubSub *redis.PubSub
 }
 
 // NewRedisStreamClient creates a new RedisStreamClient
@@ -123,7 +127,8 @@ func (r *ReliableRedisStreamClient) Done(ctx context.Context, streamName string)
 
 	// unlock the stream
 	ok, err := lbsInfo.Mutex.Unlock()
-	if err != nil && err != redsync.ErrLockAlreadyExpired {
+	log.Println("Unlocking stream", streamName, "done: ", ok, "err: ", err)
+	if err != nil && errors.Unwrap(err) != redsync.ErrLockAlreadyExpired {
 		return err
 	}
 
@@ -137,6 +142,12 @@ func (r *ReliableRedisStreamClient) Done(ctx context.Context, streamName string)
 	if ok {
 		delete(r.streamLocks, streamName)
 	}
+
+	// close channels
+	close(r.lbsChan)
+
+	// close pubsub
+	r.pubSub.Close()
 
 	return nil
 }

@@ -1,10 +1,11 @@
 package impl
 
 import (
-	"bburli/redis-stream-client/source/types"
+	"bburli/redis-stream-client-go/types"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/go-redsync/redsync/v4"
@@ -24,8 +25,8 @@ func (r *ReliableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx con
 }
 
 func (r *ReliableRedisStreamClient) subscribeToExpiredEvents(ctx context.Context) error {
-	sub := r.redisClient.PSubscribe(ctx, types.ExpiredEventPattern)
-	r.kspChan = sub.Channel(redis.WithChannelHealthCheckInterval(1*time.Second), redis.WithChannelSendTimeout(10*time.Minute))
+	r.pubSub = r.redisClient.PSubscribe(ctx, types.ExpiredEventPattern)
+	r.kspChan = r.pubSub.Channel(redis.WithChannelHealthCheckInterval(1*time.Second), redis.WithChannelSendTimeout(10*time.Minute))
 	return nil
 }
 
@@ -33,23 +34,24 @@ func (r *ReliableRedisStreamClient) readLBSStream(ctx context.Context) error {
 	pool := goredis.NewPool(r.redisClient)
 	rs := redsync.New(pool)
 
+	// create group
+	r.redisClient.XGroupCreateMkStream(ctx, r.lbsName(), r.lbsGroupName(), types.StartFromNow)
+
 	for {
 		// check if context is done
 		select {
 		case <-ctx.Done():
-			return nil
+			log.Println("Context is done, existing reading LBS stream")
 		default:
 		}
 
 		// blocking read on LBS stream
-		fmt.Println("Reading from ", r.lbsName(), types.PendingMsgID)
+		log.Println("Reading LBS stream")
 		res := r.redisClient.XReadGroup(ctx, &redis.XReadGroupArgs{
 			Group:    r.lbsGroupName(),
 			Consumer: r.consumerID,
 			Streams:  []string{r.lbsName(), types.PendingMsgID},
 		})
-
-		fmt.Println("Reading LBS stream: ", res.Val(), res.Err())
 
 		if res.Err() != nil {
 			return res.Err()
@@ -57,7 +59,6 @@ func (r *ReliableRedisStreamClient) readLBSStream(ctx context.Context) error {
 
 		for _, stream := range res.Val() {
 			for _, message := range stream.Messages {
-				fmt.Println("Got a new stream: ", message.Values)
 				// has to be an LBS message
 				v, ok := message.Values[types.LBSInput]
 				if !ok {
@@ -83,6 +84,26 @@ func (r *ReliableRedisStreamClient) readLBSStream(ctx context.Context) error {
 					redsync.WithGenValueFunc(func() (string, error) {
 						return r.consumerID, nil
 					}))
+
+				// now, keep extending the lock in a separate go routine
+				go func() {
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						default:
+						}
+
+						if _, err := mutex.Extend(); err != nil {
+							log.Println("Failed to extend lock for stream", lbsMessage.DataStreamName, "err: ", err)
+							return
+						}
+
+						log.Println("Extended lock for stream", lbsMessage.DataStreamName)
+
+						time.Sleep(r.hbInterval / 2)
+					}
+				}()
 
 				r.streamLocks[lbsMessage.DataStreamName] = &types.LBSInfo{
 					DataStreamName: lbsMessage.DataStreamName,
