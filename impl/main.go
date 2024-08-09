@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-redsync/redsync/v4"
+	"github.com/go-redsync/redsync/v4/redis/goredis/v9"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -76,7 +78,7 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, hbInterval time.Dur
 // subscribing to expired events, and starting a blocking read on the LBS stream
 // Returns a channel to read messages from the LBS stream. The client should read from this channel and process the messages.
 // Returns a channel to read keyspace notifications. The client should read from this channel and process the notifications.
-func (r *ReliableRedisStreamClient) Init(ctx context.Context) (chan *redis.XMessage, <-chan *redis.Message, error) {
+func (r *ReliableRedisStreamClient) Init(ctx context.Context) (<-chan *redis.XMessage, <-chan *redis.Message, error) {
 	// add guard lua script
 	if r.checkErr(ctx, r.enableKeyspaceNotifsForExpiredEvents).
 		checkErr(ctx, r.subscribeToExpiredEvents) == nil {
@@ -90,25 +92,44 @@ func (r *ReliableRedisStreamClient) Init(ctx context.Context) (chan *redis.XMess
 }
 
 // Claim claims pending messages from a stream
-func (r *ReliableRedisStreamClient) Claim(ctx context.Context, streamName string, newConsumerID string) error {
+func (r *ReliableRedisStreamClient) Claim(ctx context.Context, expiredStreamName string, newConsumerID string) error {
 	// acquire lock on the stream
-	lbsInfo, ok := r.streamLocks[streamName]
-	if !ok {
-		return fmt.Errorf("stream not found")
-	}
+	parts := strings.Split(expiredStreamName, ":")
+	streamName := parts[0]
+	idInLBS := parts[1]
+
+	pool := goredis.NewPool(r.redisClient)
+	rs := redsync.New(pool)
+
+	mutex := rs.NewMutex(expiredStreamName,
+		redsync.WithExpiry(r.hbInterval),
+		redsync.WithFailFast(true),
+		redsync.WithRetryDelay(10*time.Millisecond),
+		redsync.WithSetNXOnExtend(),
+		redsync.WithGenValueFunc(func() (string, error) {
+			return r.consumerID, nil
+		}))
 
 	// lock the stream
-	if err := lbsInfo.Mutex.Lock(); err != nil {
+	if err := mutex.Lock(); err != nil {
 		return err
+	}
+
+	mutex.Extend()
+
+	r.streamLocks[streamName] = &types.LBSInfo{
+		DataStreamName: streamName,
+		IDInLBS:        idInLBS,
+		Mutex:          mutex,
 	}
 
 	// Claim the stream
 	res := r.redisClient.XClaim(ctx, &redis.XClaimArgs{
-		Stream:   streamName,
+		Stream:   r.lbsName(),
 		Group:    r.lbsGroupName(),
 		Consumer: newConsumerID,
 		MinIdle:  0,
-		Messages: []string{r.streamLocks[streamName].IDInLBS},
+		Messages: []string{idInLBS},
 	})
 
 	if res.Err() != nil {
@@ -143,11 +164,13 @@ func (r *ReliableRedisStreamClient) Done(ctx context.Context, streamName string)
 		delete(r.streamLocks, streamName)
 	}
 
-	// close channels
-	close(r.lbsChan)
-
-	// close pubsub
-	r.pubSub.Close()
-
 	return nil
+}
+
+func (r *ReliableRedisStreamClient) Close(ctx context.Context) {
+	close(r.lbsChan)
+	r.pubSub.Close()
+	// drain kspchan
+	for range r.kspChan {
+	}
 }
