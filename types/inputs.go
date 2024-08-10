@@ -1,14 +1,7 @@
 package types
 
-import "github.com/go-redsync/redsync/v4"
-
+// LBSMessage is the format in which the message should be written to LBS
 type LBSMessage struct {
 	DataStreamName string
 	Info           map[string]interface{}
-}
-
-type LBSInfo struct {
-	DataStreamName string
-	IDInLBS        string
-	Mutex          *redsync.Mutex
 }

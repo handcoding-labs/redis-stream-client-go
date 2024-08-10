@@ -5,6 +5,7 @@ go 1.22
 require (
 	github.com/redis/go-redis/v9 v9.5.3
 	github.com/testcontainers/testcontainers-go/modules/redis v0.32.0
+	go.uber.org/goleak v1.3.0
 )
 
 require (
