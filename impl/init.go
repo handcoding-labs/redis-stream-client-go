@@ -1,16 +1,16 @@
 package impl
 
 import (
-    "bburli/redis-stream-client-go/types"
-    "context"
-    "encoding/json"
-    "errors"
-    "log"
-    "time"
+	"bburli/redis-stream-client-go/types"
+	"context"
+	"encoding/json"
+	"errors"
+	"log"
+	"time"
 
-    "github.com/go-redsync/redsync/v4"
-    "github.com/go-redsync/redsync/v4/redis/goredis/v9"
-    "github.com/redis/go-redis/v9"
+	"github.com/go-redsync/redsync/v4"
+	"github.com/go-redsync/redsync/v4/redis/goredis/v9"
+	"github.com/redis/go-redis/v9"
 )
 
 func (r *ReliableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx context.Context) error {
@@ -54,10 +54,12 @@ func (r *ReliableRedisStreamClient) readLBSStream(ctx context.Context) {
 			Streams:  []string{r.lbsName(), types.PendingMsgID},
 		})
 
-		if res.Err() != nil{
-			if errors.Is(res.Err(), context.Canceled) { return }
-				log.Fatal("error while reading from LBS: ", res.Err())
+		if res.Err() != nil {
+			if errors.Is(res.Err(), context.Canceled) {
 				return
+			}
+			log.Fatal("error while reading from LBS: ", res.Err())
+			return
 		}
 
 		for _, stream := range res.Val() {
@@ -95,17 +97,17 @@ func (r *ReliableRedisStreamClient) readLBSStream(ctx context.Context) {
 					log.Fatal("unable to lock mutex")
 				}
 
-                _, err := mutex.Extend()
-                if err != nil {
-                    log.Fatal("error while extending lock")
+				_, err := mutex.Extend()
+				if err != nil {
+					log.Fatal("error while extending lock")
 					return
-                }
+				}
 
 				r.streamLocks[lbsMessage.DataStreamName] = &lbsInfo{
 					DataStreamName: lbsMessage.DataStreamName,
 					IDInLBS:        message.ID,
 					Mutex:          mutex,
-                }
+				}
 
 				r.lbsChan <- &message
 
