@@ -5,11 +5,12 @@ import (
 	"bburli/redis-stream-client-go/types"
 	"context"
 	"encoding/json"
-	redisgo "github.com/redis/go-redis/v9"
 	"log"
 	"os"
 	"testing"
 	"time"
+
+	redisgo "github.com/redis/go-redis/v9"
 
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go/modules/redis"
@@ -74,36 +75,7 @@ func TestLBS(t *testing.T) {
 	lbsChan2, _, err = consumer2.Init(ctx)
 	require.NoError(t, err)
 
-	lbsMsg1, _ := json.Marshal(types.LBSMessage{
-		DataStreamName: "session1",
-		Info: map[string]interface{}{
-			"key1": "value1",
-		},
-	})
-
-	lbsMsg2, _ := json.Marshal(types.LBSMessage{
-		DataStreamName: "session2",
-		Info: map[string]interface{}{
-			"key2": "value2",
-		},
-	})
-
-	producer := newRedisClient(redisContainer)
-	_, err = producer.XAdd(context.Background(), &redisgo.XAddArgs{
-		Stream: "consumer-input",
-		Values: map[string]any{
-			types.LBSInput: string(lbsMsg1),
-		},
-	}).Result()
-	require.NoError(t, err)
-
-	_, err = producer.XAdd(context.Background(), &redisgo.XAddArgs{
-		Stream: "consumer-input",
-		Values: map[string]any{
-			types.LBSInput: string(lbsMsg2),
-		},
-	}).Result()
-	require.NoError(t, err)
+	addTwoStreamsToLBS(t, redisContainer)
 
 	// load balanced stream distributes messages to different consumers in a load balanced way
 	// so we keep track of which stream was given to consumer1 so that we can check if consumer2 gets another one
@@ -199,7 +171,7 @@ func TestKspNotifs(t *testing.T) {
 	require.NoError(t, redisClient.Close())
 }
 
-func TestNewRedisStreamClientMainFlow(t *testing.T) {
+func TestMainFlow(t *testing.T) {
 	// Main flow:
 	// there is one producer and two consumers: consumer1 and consumer2
 	// producer adds messages and consumers consume.
@@ -233,42 +205,14 @@ func TestNewRedisStreamClientMainFlow(t *testing.T) {
 	require.NotNil(t, lbsChan2)
 	require.NotNil(t, kspChan2)
 
-	// add a new stream to lbsChan
-	lbsMsg1, _ := json.Marshal(types.LBSMessage{
-		DataStreamName: "session1",
-		Info: map[string]interface{}{
-			"key1": "value1",
-		},
-	})
+	addTwoStreamsToLBS(t, redisContainer)
 
-	// add second stream to lbsChan
-	lbsMsg2, _ := json.Marshal(types.LBSMessage{
-		DataStreamName: "session2",
-		Info: map[string]interface{}{
-			"key2": "value2",
-		},
-	})
-
-	producer := newRedisClient(redisContainer)
-	_, err = producer.XAdd(context.Background(), &redisgo.XAddArgs{
-		Stream: "consumer-input",
-		Values: map[string]any{
-			types.LBSInput: string(lbsMsg1),
-		},
-	}).Result()
-	require.NoError(t, err)
-
-	_, err = producer.XAdd(context.Background(), &redisgo.XAddArgs{
-		Stream: "consumer-input",
-		Values: map[string]any{
-			types.LBSInput: string(lbsMsg2),
-		},
-	}).Result()
-	require.NoError(t, err)
+	simpleRedisClient := newRedisClient(redisContainer)
 
 	// read from lbsChan
 	streamsPickedup := 0
 	consumer1Crashed := false
+	gotNotification := false
 
 	i := 0
 
@@ -281,12 +225,14 @@ func TestNewRedisStreamClientMainFlow(t *testing.T) {
 		if streamsPickedup == 2 && !consumer1Crashed {
 			// kill consumer1
 			log.Println("killing consumer1")
+			require.Len(t, consumer1.StreamsOwned(), 1)
 			consumer1CancelFunc()
 			consumer1Crashed = true
 		}
 
 		select {
 		case notif, ok := <-kspChan2:
+			gotNotification = true
 			require.True(t, consumer1Crashed)
 			require.True(t, ok)
 			require.NotNil(t, notif)
@@ -294,7 +240,7 @@ func TestNewRedisStreamClientMainFlow(t *testing.T) {
 			require.Contains(t, notif.Payload, "session")
 			err = consumer2.Claim(consumer2Ctx, notif.Payload, "redis-consumer-222")
 			require.NoError(t, err)
-			res := producer.XInfoStreamFull(context.Background(), "consumer-input", 100)
+			res := simpleRedisClient.XInfoStreamFull(context.Background(), "consumer-input", 100)
 			require.NotNil(t, res)
 			require.NotNil(t, res.Val())
 			grpInfo := res.Val().Groups
@@ -320,29 +266,32 @@ func TestNewRedisStreamClientMainFlow(t *testing.T) {
 			require.True(t, c1.SeenTime.Before(c2.SeenTime))
 
 		case msg, ok := <-lbsChan1:
-			require.True(t, ok)
-			require.NotNil(t, msg)
-			var lbsMessage types.LBSMessage
-			require.NoError(t, json.Unmarshal([]byte(msg.Values[types.LBSInput].(string)), &lbsMessage))
-			require.NotNil(t, lbsMessage)
-			require.Contains(t, lbsMessage.DataStreamName, "session")
-			require.Contains(t, lbsMessage.Info["key1"], "value")
-			streamsPickedup++
+			if ok {
+				require.NotNil(t, msg)
+				var lbsMessage types.LBSMessage
+				require.NoError(t, json.Unmarshal([]byte(msg.Values[types.LBSInput].(string)), &lbsMessage))
+				require.NotNil(t, lbsMessage)
+				require.Contains(t, lbsMessage.DataStreamName, "session")
+				require.Contains(t, lbsMessage.Info["key1"], "value")
+				streamsPickedup++
+			}
 		case msg, ok := <-lbsChan2:
-			require.True(t, ok)
-			require.NotNil(t, msg)
-			var lbsMessage types.LBSMessage
-			require.NoError(t, json.Unmarshal([]byte(msg.Values[types.LBSInput].(string)), &lbsMessage))
-			require.NotNil(t, lbsMessage)
-			require.Contains(t, lbsMessage.DataStreamName, "session")
-			require.Contains(t, lbsMessage.Info["key2"], "value")
-			streamsPickedup++
+			if ok {
+				require.NotNil(t, msg)
+				var lbsMessage types.LBSMessage
+				require.NoError(t, json.Unmarshal([]byte(msg.Values[types.LBSInput].(string)), &lbsMessage))
+				require.NotNil(t, lbsMessage)
+				require.Contains(t, lbsMessage.DataStreamName, "session")
+				require.Contains(t, lbsMessage.Info["key2"], "value")
+				streamsPickedup++
+			}
 		case <-time.After(time.Second):
 		}
 
 		i++
 	}
 
+	require.True(t, gotNotification)
 	err = consumer2.Done(consumer2Ctx, "session1")
 	require.NoError(t, err)
 	err = consumer2.Done(consumer2Ctx, "session2")
@@ -368,6 +317,41 @@ func TestNewRedisStreamClientMainFlow(t *testing.T) {
 	// lbs chan is also closed
 	_, ok = <-lbsChan1
 	require.False(t, ok)
+}
+
+func addTwoStreamsToLBS(t *testing.T, redisContainer *redis.RedisContainer) {
+	lbsMsg1, _ := json.Marshal(types.LBSMessage{
+		DataStreamName: "session1",
+		Info: map[string]interface{}{
+			"key1": "value1",
+		},
+	})
+
+	lbsMsg2, _ := json.Marshal(types.LBSMessage{
+		DataStreamName: "session2",
+		Info: map[string]interface{}{
+			"key2": "value2",
+		},
+	})
+
+	producer := newRedisClient(redisContainer)
+	defer producer.Close()
+
+	_, err := producer.XAdd(context.Background(), &redisgo.XAddArgs{
+		Stream: "consumer-input",
+		Values: map[string]any{
+			types.LBSInput: string(lbsMsg1),
+		},
+	}).Result()
+	require.NoError(t, err)
+
+	_, err = producer.XAdd(context.Background(), &redisgo.XAddArgs{
+		Stream: "consumer-input",
+		Values: map[string]any{
+			types.LBSInput: string(lbsMsg2),
+		},
+	}).Result()
+	require.NoError(t, err)
 }
 
 func createConsumer(name string, redisContainer *redis.RedisContainer) types.RedisStreamClient {

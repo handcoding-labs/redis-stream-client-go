@@ -25,10 +25,6 @@ type RedisStreamClient interface {
 	//
 	// should be called when consumer is done processing the data stream.
 	Done(ctx context.Context, dataStreamName string) error
-	// Giveup is used in scenarios where a consumer wants to relinquish control of all data streams so that others can go ahead and process it.
-	//
-	// should be called with same context with which Init was called otherwise it won't work.
-	Giveup(ctx context.Context) error
 	// Close will close the redis stream client
 	//
 	// should be called to clean up everything: lbschan, redis pub/sub channel and other internal data structures.
