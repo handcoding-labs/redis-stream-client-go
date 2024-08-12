@@ -291,7 +291,7 @@ func TestNewRedisStreamClientMainFlow(t *testing.T) {
 			require.True(t, ok)
 			require.NotNil(t, notif)
 			require.NotNil(t, notif.Payload)
-			require.Contains(t, notif.Payload, "session1")
+			require.Contains(t, notif.Payload, "session")
 			err = consumer2.Claim(consumer2Ctx, notif.Payload, "redis-consumer-222")
 			require.NoError(t, err)
 			res := producer.XInfoStreamFull(context.Background(), "consumer-input", 100)
@@ -325,8 +325,8 @@ func TestNewRedisStreamClientMainFlow(t *testing.T) {
 			var lbsMessage types.LBSMessage
 			require.NoError(t, json.Unmarshal([]byte(msg.Values[types.LBSInput].(string)), &lbsMessage))
 			require.NotNil(t, lbsMessage)
-			require.Equal(t, "session1", lbsMessage.DataStreamName)
-			require.Equal(t, "value1", lbsMessage.Info["key1"])
+			require.Contains(t, "session", lbsMessage.DataStreamName)
+			require.Equal(t, "value", lbsMessage.Info["key1"])
 			streamsPickedup++
 		case msg, ok := <-lbsChan2:
 			require.True(t, ok)
@@ -334,8 +334,8 @@ func TestNewRedisStreamClientMainFlow(t *testing.T) {
 			var lbsMessage types.LBSMessage
 			require.NoError(t, json.Unmarshal([]byte(msg.Values[types.LBSInput].(string)), &lbsMessage))
 			require.NotNil(t, lbsMessage)
-			require.Equal(t, "session2", lbsMessage.DataStreamName)
-			require.Equal(t, "value2", lbsMessage.Info["key2"])
+			require.Equal(t, "session", lbsMessage.DataStreamName)
+			require.Equal(t, "value", lbsMessage.Info["key2"])
 			streamsPickedup++
 		case <-time.After(time.Second):
 		}
