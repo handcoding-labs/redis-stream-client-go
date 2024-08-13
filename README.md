@@ -1,4 +1,6 @@
 # redis-stream-client
+[![Go](https://github.com/badari31/redis-stream-client-go/actions/workflows/go.yml/badge.svg)](https://github.com/badari31/redis-stream-client-go/actions/workflows/go.yml)
+
 A redis stream based client that can recover from failures.
 
 Redis streams are awesome! Typically they are used for data written in one end and consumed at other.
