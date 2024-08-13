@@ -24,5 +24,3 @@ This library aims to provide two such constructs built on top of redis' own data
 In addition to this, for better management, the library provides a load balancer stream (LBS) based on redis streams and consumer groups that work in a load balanced fashion which can distribute incoming streams (not stream data!) among existing consumers using round-robin fashion.
 
 ![Redis stream client - LBS](./imgs/redis_stream_client_lbs.png)
-
-In addition to these, the library also provides
