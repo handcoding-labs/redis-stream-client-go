@@ -1,21 +1,21 @@
 package impl
 
 import (
-	"bburli/redis-stream-client-go/types"
-	"context"
-	"errors"
-	"fmt"
-	"log"
-	"os"
-	"strings"
-	"time"
+    "bburli/redis-stream-client-go/types"
+    "context"
+    "errors"
+    "fmt"
+    "log"
+    "os"
+    "strings"
+    "time"
 
-	"github.com/go-redsync/redsync/v4"
-	"github.com/go-redsync/redsync/v4/redis/goredis/v9"
-	"github.com/redis/go-redis/v9"
+    "github.com/go-redsync/redsync/v4"
+    "github.com/go-redsync/redsync/v4/redis/goredis/v9"
+    "github.com/redis/go-redis/v9"
 )
 
-// RedisStreamClient is an implementation of the RedisStreamClient interface
+// ReliableRedisStreamClient is an implementation of the RedisStreamClient interface
 type ReliableRedisStreamClient struct {
 	// underlying redis client used to interact with redis
 	redisClient redis.UniversalClient
@@ -25,10 +25,12 @@ type ReliableRedisStreamClient struct {
 	kspChan <-chan *redis.Message
 	// lbsChan is the channel to read messages from the LBS stream
 	lbsChan chan *redis.XMessage
+	// lbsCtxCancelFunc is used to control when to kill go routines spwaned as part of lbs
+	lbsCtxCancelFunc context.CancelFunc
 	// hbInterval is the interval at which the client sends heartbeats
 	hbInterval time.Duration
 	// streamLocks is a map of stream name to LBSInfo for locking
-	streamLocks map[string]*types.LBSInfo
+	streamLocks map[string]*lbsInfo
 	// serviceName is the name of the service
 	serviceName string
 	// redis pub sub subscription
@@ -58,16 +60,16 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, hbInterval time.Dur
 
 	if hbInterval == 0 {
 		// default to 1 second
-		hbInterval = time.Duration(time.Second)
+		hbInterval = time.Second
 	}
-
+	
 	return &ReliableRedisStreamClient{
 		redisClient: redisClient,
 		consumerID:  consumerID,
 		kspChan:     make(<-chan *redis.Message, 500),
 		lbsChan:     make(chan *redis.XMessage, 500),
 		hbInterval:  hbInterval,
-		streamLocks: make(map[string]*types.LBSInfo),
+		streamLocks: make(map[string]*lbsInfo),
 		serviceName: serviceName,
 	}
 }
@@ -79,14 +81,16 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, hbInterval time.Dur
 // Returns a channel to read messages from the LBS stream. The client should read from this channel and process the messages.
 // Returns a channel to read keyspace notifications. The client should read from this channel and process the notifications.
 func (r *ReliableRedisStreamClient) Init(ctx context.Context) (<-chan *redis.XMessage, <-chan *redis.Message, error) {
-	// add guard lua script
 	if r.checkErr(ctx, r.enableKeyspaceNotifsForExpiredEvents).
 		checkErr(ctx, r.subscribeToExpiredEvents) == nil {
 		return nil, nil, fmt.Errorf("error initializing the client")
 	}
+	
+	lbsCtx, cancelFunc := context.WithCancel(ctx)
+	r.lbsCtxCancelFunc = cancelFunc
 
 	// start blocking read on LBS stream
-	go r.readLBSStream(ctx)
+	go r.readLBSStream(lbsCtx)
 
 	return r.lbsChan, r.kspChan, nil
 }
@@ -115,9 +119,12 @@ func (r *ReliableRedisStreamClient) Claim(ctx context.Context, expiredStreamName
 		return err
 	}
 
-	mutex.Extend()
+    _, err := mutex.Extend()
+    if err != nil {
+        return err
+    }
 
-	r.streamLocks[streamName] = &types.LBSInfo{
+	r.streamLocks[streamName] = &lbsInfo{
 		DataStreamName: streamName,
 		IDInLBS:        idInLBS,
 		Mutex:          mutex,
@@ -149,7 +156,7 @@ func (r *ReliableRedisStreamClient) Done(ctx context.Context, streamName string)
 	// unlock the stream
 	ok, err := lbsInfo.Mutex.Unlock()
 	log.Println("Unlocking stream", streamName, "done: ", ok, "err: ", err)
-	if err != nil && errors.Unwrap(err) != redsync.ErrLockAlreadyExpired {
+	if err != nil && !errors.Is(errors.Unwrap(err), redsync.ErrLockAlreadyExpired) {
 		return err
 	}
 
@@ -158,7 +165,13 @@ func (r *ReliableRedisStreamClient) Done(ctx context.Context, streamName string)
 	if res.Err() != nil {
 		return res.Err()
 	}
-
+	
+	// evict any waiting clients
+	res = r.redisClient.ClientUnblock(ctx, r.redisClient.ClientID(ctx).Val())
+	if res.Err() != nil {
+		log.Fatal("client unblock failed!")
+	}
+	
 	// delete volatile key from streamLocks
 	if ok {
 		delete(r.streamLocks, streamName)
@@ -167,9 +180,12 @@ func (r *ReliableRedisStreamClient) Done(ctx context.Context, streamName string)
 	return nil
 }
 
-func (r *ReliableRedisStreamClient) Close(ctx context.Context) {
+func (r *ReliableRedisStreamClient) Close() {
 	close(r.lbsChan)
-	r.pubSub.Close()
+    err := r.pubSub.Close()
+    if err != nil {
+        log.Println("error in closing redis pub/sub")
+    }
 	// drain kspchan
 	for range r.kspChan {
 	}

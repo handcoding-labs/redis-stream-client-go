@@ -1,19 +1,18 @@
 package test
 
 import (
-	"bburli/redis-stream-client-go/impl"
-	"bburli/redis-stream-client-go/types"
-	"context"
-	"encoding/json"
-	"log"
-	"os"
-	"testing"
-	"time"
+    "bburli/redis-stream-client-go/impl"
+    "bburli/redis-stream-client-go/types"
+    "context"
+    "encoding/json"
+    redisgo "github.com/redis/go-redis/v9"
+    "log"
+    "os"
+    "testing"
+    "time"
 
-	redisgo "github.com/redis/go-redis/v9"
-
-	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go/modules/redis"
+    "github.com/stretchr/testify/require"
+    "github.com/testcontainers/testcontainers-go/modules/redis"
 )
 
 func newRedisClient(redisContainer *redis.RedisContainer) redisgo.UniversalClient {
@@ -152,10 +151,10 @@ func TestLBS(t *testing.T) {
 		}
 	}
 
-	consumer1.Close(ctx)
+	consumer1.Close()
 	_, ok := <-lbsChan1
 	require.False(t, ok)
-	consumer2.Close(ctx)
+	consumer2.Close()
 	_, ok = <-lbsChan2
 	require.False(t, ok)
 }
@@ -208,6 +207,7 @@ func TestNewRedisStreamClientMainFlow(t *testing.T) {
 	// consumer2 is notified via ksp and it claims the stream
 
 	// redis container
+	// defer goleak.VerifyNone(t)
 	redisContainer := setupSuite(t)
 
 	// context based flow
@@ -278,8 +278,9 @@ func TestNewRedisStreamClientMainFlow(t *testing.T) {
 			break
 		}
 
-		if streamsPickedup == 2 {
+		if streamsPickedup == 2 && !consumer1Crashed{
 			// kill consumer1
+			log.Println("killing consumer1")
 			consumer1CancelFunc()
 			consumer1Crashed = true
 		}
@@ -342,11 +343,13 @@ func TestNewRedisStreamClientMainFlow(t *testing.T) {
 		i++
 	}
 
-	consumer2.Done(consumer2Ctx, "session1") // TODO: how will we get this dynamically?
-	consumer2.Done(consumer2Ctx, "session2")
+	err = consumer2.Done(consumer2Ctx, "session1")
+	require.NoError(t, err)
+	err = consumer2.Done(consumer2Ctx, "session2")
+	require.NoError(t, err)
 
-	consumer1.Close(consumer1Ctx)
-	consumer2.Close(consumer2Ctx)
+	consumer1.Close()
+	consumer2.Close()
 
 	// cancel the context
 	consumer2CancelFunc()
@@ -368,7 +371,7 @@ func TestNewRedisStreamClientMainFlow(t *testing.T) {
 }
 
 func createConsumer(name string, redisContainer *redis.RedisContainer) types.RedisStreamClient {
-	os.Setenv("POD_NAME", name)
+    _ = os.Setenv("POD_NAME", name)
 	// create a new redis client
 	return impl.NewRedisStreamClient(newRedisClient(redisContainer), time.Millisecond*20, "consumer")
 }
