@@ -1,4 +1,7 @@
-# redis-stream-client
+# redis-stream-client-go
+
+This lib uses ![go-redis](https://github.com/redis/go-redis) and ![redsync](https://github.com/go-redsync/redsync)
+
 [![Go](https://github.com/badari31/redis-stream-client-go/actions/workflows/go.yml/badge.svg)](https://github.com/badari31/redis-stream-client-go/actions/workflows/go.yml)
 
 A redis stream based client that can recover from failures.
@@ -26,3 +29,37 @@ This library aims to provide two such constructs built on top of redis' own data
 In addition to this, for better management, the library provides a load balancer stream (LBS) based on redis streams and consumer groups that work in a load balanced fashion which can distribute incoming streams (not stream data!) among existing consumers using round-robin fashion.
 
 ![Redis stream client - LBS](./imgs/redis_stream_client_lbs.png)
+
+# usage
+
+Just import the library:
+
+`go get https://github.com/badari31/redis-stream-client-go`
+
+Create the client:
+
+`import rsv "github.com/badari31/redis-stream-client-go/impl"`
+
+`client := rsc.NewRedisStreamClient(<go redis client>, <heartbeat_interval>, <service_name>)`
+
+Initialize the client and use the LBC and Key space notification channel for tracking which data streams to read and which have expired respectively:
+
+`lbsChan, kspChan, err := client.Init(ctx)`
+
+When a notification is received on `kspChan`, then client calls `Claim` to claim the datastream name:
+
+`err := client.Claim(ctx, <ksp notification payload>)`
+
+An error in `Claim` indicates the client was not successful in claiming the stream as some other client got there before.
+
+After all the processing is done, call `DoneDataStream` on client to mark end for a particular data stream that the consumer owns (full list can be obtained by `StreamsOwned()`)
+
+`client.DoneDataStream(ctx, <data stream name>)`
+
+Or if the client wants to release all streams and mark them as done (for whatever reason): use `Done(ctx)`
+
+`client.Done(ctx)`
+
+Method `ID()` can be used to obtain client ID for logging purposes:
+
+`client.ID()`

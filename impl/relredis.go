@@ -74,6 +74,11 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, hbInterval time.Dur
 	}
 }
 
+// ID returns the consumer name that uniquely identifies the consumer
+func (r *ReliableRedisStreamClient) ID() string {
+	return r.consumerID
+}
+
 // Init initializes the RedisStreamClient
 //
 // This function initializes the RedisStreamClient by enabling keyspace notifications for expired events,
@@ -96,7 +101,7 @@ func (r *ReliableRedisStreamClient) Init(ctx context.Context) (<-chan *redis.XMe
 }
 
 // Claim claims pending messages from a stream
-func (r *ReliableRedisStreamClient) Claim(ctx context.Context, expiredStreamName string, newConsumerID string) error {
+func (r *ReliableRedisStreamClient) Claim(ctx context.Context, expiredStreamName string) error {
 	parts := strings.Split(expiredStreamName, ":")
 	streamName := parts[0]
 	idInLBS := parts[1]
@@ -105,7 +110,7 @@ func (r *ReliableRedisStreamClient) Claim(ctx context.Context, expiredStreamName
 	res := r.redisClient.XClaim(ctx, &redis.XClaimArgs{
 		Stream:   r.lbsName(),
 		Group:    r.lbsGroupName(),
-		Consumer: newConsumerID,
+		Consumer: r.consumerID,
 		MinIdle:  r.hbInterval, // one heartbeat internval has elapsed
 		Messages: []string{idInLBS},
 	})
@@ -152,16 +157,16 @@ func (r *ReliableRedisStreamClient) Claim(ctx context.Context, expiredStreamName
 	return nil
 }
 
-// Done marks the end of processing the stream
-func (r *ReliableRedisStreamClient) Done(ctx context.Context, streamName string) error {
-	lbsInfo, ok := r.streamLocks[streamName]
+// DoneDataStream marks end of processing for a particular stream
+func (r *ReliableRedisStreamClient) DoneDataStream(ctx context.Context, dataStreamName string) error {
+	lbsInfo, ok := r.streamLocks[dataStreamName]
 	if !ok {
 		return fmt.Errorf("stream not found")
 	}
 
 	// unlock the stream
 	ok, err := lbsInfo.Mutex.Unlock()
-	log.Println("Unlocking stream", streamName, "done: ", ok, "err: ", err)
+	log.Println("Unlocking stream", dataStreamName, "done: ", ok, "err: ", err)
 	if err != nil && !errors.Is(errors.Unwrap(err), redsync.ErrLockAlreadyExpired) {
 		return err
 	}
@@ -174,13 +179,25 @@ func (r *ReliableRedisStreamClient) Done(ctx context.Context, streamName string)
 
 	// delete volatile key from streamLocks
 	if ok {
-		delete(r.streamLocks, streamName)
+		delete(r.streamLocks, dataStreamName)
 	}
 
 	return nil
 }
 
-func (r *ReliableRedisStreamClient) Close() {
+// Done marks the end of processing for a client
+func (r *ReliableRedisStreamClient) Done(ctx context.Context) {
+	for streamName := range r.streamLocks {
+		if err := r.DoneDataStream(ctx, streamName); err != nil {
+			log.Println("error", err, " occured while marking stream", streamName, " as done; moving on to other streams ...")
+		}
+	}
+
+	// release resources
+	r.cleanup()
+}
+
+func (r *ReliableRedisStreamClient) cleanup() {
 	close(r.lbsChan)
 	err := r.pubSub.Close()
 	if err != nil {
