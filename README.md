@@ -34,7 +34,9 @@ In addition to this, for better management, the library provides a load balancer
 
 Just import the library:
 
-```go get https://github.com/badari31/redis-stream-client-go```
+```
+go get https://github.com/badari31/redis-stream-client-go
+```
 
 Create the client:
 
