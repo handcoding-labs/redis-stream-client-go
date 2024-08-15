@@ -1,10 +1,8 @@
 # redis-stream-client-go
 
-This lib uses [go-redis](https://github.com/redis/go-redis) and [redsync](https://github.com/go-redsync/redsync)
-
 [![Go](https://github.com/badari31/redis-stream-client-go/actions/workflows/go.yml/badge.svg)](https://github.com/badari31/redis-stream-client-go/actions/workflows/go.yml)
 
-A redis stream based client that can recover from failures.
+A redis stream based client that can recover from failures. This lib is based on [go-redis](https://github.com/redis/go-redis) and [redsync](https://github.com/go-redsync/redsync)
 
 Redis streams are awesome! Typically they are used for data written in one end and consumed at other.
 
