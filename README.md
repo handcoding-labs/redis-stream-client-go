@@ -34,11 +34,11 @@ In addition to this, for better management, the library provides a load balancer
 
 Just import the library:
 
-`go get https://github.com/badari31/redis-stream-client-go`
+```go get https://github.com/badari31/redis-stream-client-go```
 
 Create the client:
 
-`import rsv "github.com/badari31/redis-stream-client-go/impl"`
+`import rsc "github.com/badari31/redis-stream-client-go/impl"`
 
 `client := rsc.NewRedisStreamClient(<go redis client>, <heartbeat_interval>, <service_name>)`
 
