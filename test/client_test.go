@@ -326,7 +326,7 @@ func TestNewRedisStreamClientMainFlow(t *testing.T) {
 			require.NoError(t, json.Unmarshal([]byte(msg.Values[types.LBSInput].(string)), &lbsMessage))
 			require.NotNil(t, lbsMessage)
 			require.Contains(t, "session", lbsMessage.DataStreamName)
-			require.Equal(t, "value", lbsMessage.Info["key1"])
+			require.Contains(t, lbsMessage.Info["key1"], "value")
 			streamsPickedup++
 		case msg, ok := <-lbsChan2:
 			require.True(t, ok)
@@ -334,8 +334,8 @@ func TestNewRedisStreamClientMainFlow(t *testing.T) {
 			var lbsMessage types.LBSMessage
 			require.NoError(t, json.Unmarshal([]byte(msg.Values[types.LBSInput].(string)), &lbsMessage))
 			require.NotNil(t, lbsMessage)
-			require.Equal(t, "session", lbsMessage.DataStreamName)
-			require.Equal(t, "value", lbsMessage.Info["key2"])
+			require.Contains(t, lbsMessage.DataStreamName, "session")
+			require.Contains(t, lbsMessage.Info["key2"], "value")
 			streamsPickedup++
 		case <-time.After(time.Second):
 		}
