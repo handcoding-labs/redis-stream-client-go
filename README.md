@@ -40,28 +40,42 @@ go get https://github.com/badari31/redis-stream-client-go
 
 Create the client:
 
-`import rsc "github.com/badari31/redis-stream-client-go/impl"`
+```
+import rsc "github.com/badari31/redis-stream-client-go/impl"
+```
 
-`client := rsc.NewRedisStreamClient(<go redis client>, <heartbeat_interval>, <service_name>)`
+```
+client := rsc.NewRedisStreamClient(<go redis client>, <heartbeat_interval>, <service_name>)
+```
 
 Initialize the client and use the LBC and Key space notification channel for tracking which data streams to read and which have expired respectively:
 
-`lbsChan, kspChan, err := client.Init(ctx)`
+```
+lbsChan, kspChan, err := client.Init(ctx)
+```
 
 When a notification is received on `kspChan`, then client calls `Claim` to claim the datastream name:
 
-`err := client.Claim(ctx, <ksp notification payload>)`
+```
+err := client.Claim(ctx, <ksp notification payload>)
+```
 
 An error in `Claim` indicates the client was not successful in claiming the stream as some other client got there before.
 
 After all the processing is done, call `DoneDataStream` on client to mark end for a particular data stream that the consumer owns (full list can be obtained by `StreamsOwned()`)
 
-`client.DoneDataStream(ctx, <data stream name>)`
+```
+client.DoneDataStream(ctx, <data stream name>)
+```
 
 Or if the client wants to release all streams and mark them as done (for whatever reason): use `Done(ctx)`
 
-`client.Done(ctx)`
+```
+client.Done(ctx)
+```
 
 Method `ID()` can be used to obtain client ID for logging purposes:
 
-`client.ID()`
+```
+client.ID()
+```
