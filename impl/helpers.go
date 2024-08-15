@@ -1,7 +1,7 @@
 package impl
 
 import (
-	"bburli/redis-stream-client/source/types"
+	"bburli/redis-stream-client-go/types"
 	"context"
 )
 

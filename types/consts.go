@@ -4,6 +4,7 @@ const (
 	GroupSuffix                     = "-group"
 	InputSuffix                     = "-input"
 	PendingMsgID                    = ">"
+	StartFromNow                    = "$"
 	ExpiredEventPattern             = "__keyevent@0__:expired"
 	NotifyKeyspaceEventsCmd         = "notify-keyspace-events"
 	KeyspacePatternForExpiredEvents = "Ex"
