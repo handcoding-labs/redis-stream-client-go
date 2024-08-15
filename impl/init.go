@@ -1,16 +1,16 @@
 package impl
 
 import (
-	"bburli/redis-stream-client-go/types"
-	"context"
-	"encoding/json"
-	"fmt"
-	"log"
-	"time"
+    "bburli/redis-stream-client-go/types"
+    "context"
+    "encoding/json"
+    "errors"
+    "log"
+    "time"
 
-	"github.com/go-redsync/redsync/v4"
-	"github.com/go-redsync/redsync/v4/redis/goredis/v9"
-	"github.com/redis/go-redis/v9"
+    "github.com/go-redsync/redsync/v4"
+    "github.com/go-redsync/redsync/v4/redis/goredis/v9"
+    "github.com/redis/go-redis/v9"
 )
 
 func (r *ReliableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx context.Context) error {
@@ -30,7 +30,8 @@ func (r *ReliableRedisStreamClient) subscribeToExpiredEvents(ctx context.Context
 	return nil
 }
 
-func (r *ReliableRedisStreamClient) readLBSStream(ctx context.Context) error {
+func (r *ReliableRedisStreamClient) readLBSStream(ctx context.Context) {
+
 	pool := goredis.NewPool(r.redisClient)
 	rs := redsync.New(pool)
 
@@ -41,7 +42,8 @@ func (r *ReliableRedisStreamClient) readLBSStream(ctx context.Context) error {
 		// check if context is done
 		select {
 		case <-ctx.Done():
-			log.Println("Context is done, existing reading LBS stream")
+			log.Println("Context is done, exiting reading LBS stream")
+			return
 		default:
 		}
 
@@ -52,8 +54,10 @@ func (r *ReliableRedisStreamClient) readLBSStream(ctx context.Context) error {
 			Streams:  []string{r.lbsName(), types.PendingMsgID},
 		})
 
-		if res.Err() != nil {
-			return res.Err()
+		if res.Err() != nil{
+			if errors.Is(res.Err(), context.Canceled) { return }
+				log.Fatal("error while reading from LBS: ", res.Err())
+				return
 		}
 
 		for _, stream := range res.Val() {
@@ -61,17 +65,20 @@ func (r *ReliableRedisStreamClient) readLBSStream(ctx context.Context) error {
 				// has to be an LBS message
 				v, ok := message.Values[types.LBSInput]
 				if !ok {
-					return fmt.Errorf("invalid message on LBS stream, must be an LBS message type")
+					log.Fatal("invalid message on LBS stream, must be an LBS message type")
+					return
 				}
 
 				// unmarshal the message
 				var lbsMessage types.LBSMessage
 				if err := json.Unmarshal([]byte(v.(string)), &lbsMessage); err != nil {
-					return err
+					log.Fatal("error while unmarshalling LBS message")
+					return
 				}
 
 				if lbsMessage.DataStreamName == "" {
-					return fmt.Errorf("invalid message on LBS stream, must be an LBS message type")
+					log.Fatal("invalid message type on LBS")
+					return
 				}
 
 				// acquire lock
@@ -85,39 +92,43 @@ func (r *ReliableRedisStreamClient) readLBSStream(ctx context.Context) error {
 					}))
 
 				if err := mutex.Lock(); err != nil {
-					return err
+					log.Fatal("unable to lock mutex")
 				}
 
-				mutex.Extend()
+                _, err := mutex.Extend()
+                if err != nil {
+                    log.Fatal("error while extending lock")
+					return
+                }
+
+				r.streamLocks[lbsMessage.DataStreamName] = &lbsInfo{
+					DataStreamName: lbsMessage.DataStreamName,
+					IDInLBS:        message.ID,
+					Mutex:          mutex,
+                }
+
+				r.lbsChan <- &message
 
 				// now, keep extending the lock in a separate go routine
 				go func() {
 					for {
 						select {
 						case <-ctx.Done():
-							log.Println("exiting ", r.consumerID)
+							log.Println("context done, exiting ", r.consumerID)
 							return
 						default:
 						}
 
 						if _, err := mutex.Extend(); err != nil {
-							log.Println("Failed to extend lock for stream", lbsMessage.DataStreamName, "err: ", err)
+							log.Fatal("failed to extend lock for stream", lbsMessage.DataStreamName, "err: ", err)
 							return
 						}
 
-						log.Println("Extended lock for stream", lbsMessage.DataStreamName)
+						log.Println("extended lock for stream", lbsMessage.DataStreamName)
 
 						time.Sleep(r.hbInterval / 2)
 					}
 				}()
-
-				r.streamLocks[lbsMessage.DataStreamName] = &types.LBSInfo{
-					DataStreamName: lbsMessage.DataStreamName,
-					IDInLBS:        message.ID,
-					Mutex:          mutex,
-				}
-
-				r.lbsChan <- &message
 			}
 		}
 
