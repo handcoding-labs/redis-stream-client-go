@@ -1,6 +1,6 @@
 # redis-stream-client-go
 
-This lib uses ![go-redis](https://github.com/redis/go-redis) and ![redsync](https://github.com/go-redsync/redsync)
+This lib uses [go-redis](https://github.com/redis/go-redis) and [redsync](https://github.com/go-redsync/redsync)
 
 [![Go](https://github.com/badari31/redis-stream-client-go/actions/workflows/go.yml/badge.svg)](https://github.com/badari31/redis-stream-client-go/actions/workflows/go.yml)
 
