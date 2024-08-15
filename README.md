@@ -19,7 +19,7 @@ This library aims to provide two such constructs built on top of redis' own data
 1. Inform other consumers that a consumer is dead or stuck via key space notifications.
 2. Provide API to claim the stream being processed.
 
-![Redis streams failure recovery - redis-stream-client way](./imgs/redis_stream_failure_recovery-redis-stream-client_way)
+![Redis streams failure recovery - new](./imgs/redis_stream_failure_recovery-redis-stream-client_way)
 
 In addition to this, for better management, the library provides a load balancer stream (LBS) based on redis streams and consumer groups that work in a load balanced fashion which can distribute incoming streams (not stream data!) among existing consumers using round-robin fashion.
 
