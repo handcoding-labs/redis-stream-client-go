@@ -46,7 +46,6 @@ func (r *ReliableRedisStreamClient) readLBSStream(ctx context.Context) error {
 		}
 
 		// blocking read on LBS stream
-		log.Println("Reading LBS stream")
 		res := r.redisClient.XReadGroup(ctx, &redis.XReadGroupArgs{
 			Group:    r.lbsGroupName(),
 			Consumer: r.consumerID,
@@ -76,7 +75,7 @@ func (r *ReliableRedisStreamClient) readLBSStream(ctx context.Context) error {
 				}
 
 				// acquire lock
-				mutex := rs.NewMutex(lbsMessage.DataStreamName,
+				mutex := rs.NewMutex(lbsMessage.DataStreamName+":"+message.ID,
 					redsync.WithExpiry(r.hbInterval),
 					redsync.WithFailFast(true),
 					redsync.WithRetryDelay(10*time.Millisecond),
@@ -85,11 +84,18 @@ func (r *ReliableRedisStreamClient) readLBSStream(ctx context.Context) error {
 						return r.consumerID, nil
 					}))
 
+				if err := mutex.Lock(); err != nil {
+					return err
+				}
+
+				mutex.Extend()
+
 				// now, keep extending the lock in a separate go routine
 				go func() {
 					for {
 						select {
 						case <-ctx.Done():
+							log.Println("exiting ", r.consumerID)
 							return
 						default:
 						}
@@ -116,6 +122,6 @@ func (r *ReliableRedisStreamClient) readLBSStream(ctx context.Context) error {
 		}
 
 		// sleep for a while
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
 	}
 }
