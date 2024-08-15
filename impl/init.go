@@ -129,11 +129,8 @@ func (r *ReliableRedisStreamClient) processLBSMessages(ctx context.Context, stre
 
 func (r *ReliableRedisStreamClient) startExtendingKey(ctx context.Context, mutex *redsync.Mutex) {
 	for {
-		select {
-		case <-ctx.Done():
-			log.Println("context done, exiting ", r.consumerID)
+		if r.isContextDone(ctx) {
 			return
-		default:
 		}
 
 		if _, err := mutex.Extend(); err != nil {
