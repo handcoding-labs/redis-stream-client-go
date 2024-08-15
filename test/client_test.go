@@ -1,18 +1,18 @@
 package test
 
 import (
-    "bburli/redis-stream-client-go/impl"
-    "bburli/redis-stream-client-go/types"
-    "context"
-    "encoding/json"
-    redisgo "github.com/redis/go-redis/v9"
-    "log"
-    "os"
-    "testing"
-    "time"
+	"bburli/redis-stream-client-go/impl"
+	"bburli/redis-stream-client-go/types"
+	"context"
+	"encoding/json"
+	redisgo "github.com/redis/go-redis/v9"
+	"log"
+	"os"
+	"testing"
+	"time"
 
-    "github.com/stretchr/testify/require"
-    "github.com/testcontainers/testcontainers-go/modules/redis"
+	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go/modules/redis"
 )
 
 func newRedisClient(redisContainer *redis.RedisContainer) redisgo.UniversalClient {
@@ -278,7 +278,7 @@ func TestNewRedisStreamClientMainFlow(t *testing.T) {
 			break
 		}
 
-		if streamsPickedup == 2 && !consumer1Crashed{
+		if streamsPickedup == 2 && !consumer1Crashed {
 			// kill consumer1
 			log.Println("killing consumer1")
 			consumer1CancelFunc()
@@ -371,7 +371,7 @@ func TestNewRedisStreamClientMainFlow(t *testing.T) {
 }
 
 func createConsumer(name string, redisContainer *redis.RedisContainer) types.RedisStreamClient {
-    _ = os.Setenv("POD_NAME", name)
+	_ = os.Setenv("POD_NAME", name)
 	// create a new redis client
 	return impl.NewRedisStreamClient(newRedisClient(redisContainer), time.Millisecond*20, "consumer")
 }

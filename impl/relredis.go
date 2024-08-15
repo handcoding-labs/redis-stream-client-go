@@ -1,18 +1,18 @@
 package impl
 
 import (
-    "bburli/redis-stream-client-go/types"
-    "context"
-    "errors"
-    "fmt"
-    "log"
-    "os"
-    "strings"
-    "time"
+	"bburli/redis-stream-client-go/types"
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"os"
+	"strings"
+	"time"
 
-    "github.com/go-redsync/redsync/v4"
-    "github.com/go-redsync/redsync/v4/redis/goredis/v9"
-    "github.com/redis/go-redis/v9"
+	"github.com/go-redsync/redsync/v4"
+	"github.com/go-redsync/redsync/v4/redis/goredis/v9"
+	"github.com/redis/go-redis/v9"
 )
 
 // ReliableRedisStreamClient is an implementation of the RedisStreamClient interface
@@ -62,7 +62,7 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, hbInterval time.Dur
 		// default to 1 second
 		hbInterval = time.Second
 	}
-	
+
 	return &ReliableRedisStreamClient{
 		redisClient: redisClient,
 		consumerID:  consumerID,
@@ -85,7 +85,7 @@ func (r *ReliableRedisStreamClient) Init(ctx context.Context) (<-chan *redis.XMe
 		checkErr(ctx, r.subscribeToExpiredEvents) == nil {
 		return nil, nil, fmt.Errorf("error initializing the client")
 	}
-	
+
 	lbsCtx, cancelFunc := context.WithCancel(ctx)
 	r.lbsCtxCancelFunc = cancelFunc
 
@@ -119,10 +119,10 @@ func (r *ReliableRedisStreamClient) Claim(ctx context.Context, expiredStreamName
 		return err
 	}
 
-    _, err := mutex.Extend()
-    if err != nil {
-        return err
-    }
+	_, err := mutex.Extend()
+	if err != nil {
+		return err
+	}
 
 	r.streamLocks[streamName] = &lbsInfo{
 		DataStreamName: streamName,
@@ -165,13 +165,13 @@ func (r *ReliableRedisStreamClient) Done(ctx context.Context, streamName string)
 	if res.Err() != nil {
 		return res.Err()
 	}
-	
+
 	// evict any waiting clients
 	res = r.redisClient.ClientUnblock(ctx, r.redisClient.ClientID(ctx).Val())
 	if res.Err() != nil {
 		log.Fatal("client unblock failed!")
 	}
-	
+
 	// delete volatile key from streamLocks
 	if ok {
 		delete(r.streamLocks, streamName)
@@ -182,10 +182,10 @@ func (r *ReliableRedisStreamClient) Done(ctx context.Context, streamName string)
 
 func (r *ReliableRedisStreamClient) Close() {
 	close(r.lbsChan)
-    err := r.pubSub.Close()
-    if err != nil {
-        log.Println("error in closing redis pub/sub")
-    }
+	err := r.pubSub.Close()
+	if err != nil {
+		log.Println("error in closing redis pub/sub")
+	}
 	// drain kspchan
 	for range r.kspChan {
 	}
