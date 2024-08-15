@@ -5,6 +5,7 @@ import (
 	"bburli/redis-stream-client-go/types"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"testing"
@@ -112,11 +113,11 @@ func TestLBS(t *testing.T) {
 			if expectedMsgConsumer2 != "" {
 				require.Equal(t, lbsMessage.DataStreamName, expectedMsgConsumer2)
 			} else {
-				if expectedMsgConsumer2 == "session1" {
-					expectedMsgConsumer1 = "session1"
+				if lbsMessage.DataStreamName == "session1" {
+					expectedMsgConsumer1 = "session2"
 					require.Equal(t, lbsMessage.Info["key1"], "value1")
 				} else {
-					expectedMsgConsumer1 = "session2"
+					expectedMsgConsumer1 = "session1"
 					require.Equal(t, lbsMessage.Info["key2"], "value2")
 				}
 			}
@@ -129,6 +130,55 @@ func TestLBS(t *testing.T) {
 	consumer2.Close()
 	_, ok = <-lbsChan2
 	require.False(t, ok)
+}
+
+func TestClaimWorksOnlyOnce(t *testing.T) {
+	ctxWCancel, cancelFunc := context.WithCancel(context.Background())
+	ctxWOCancel := context.Background()
+
+	redisContainer := setupSuite(t)
+
+	redisClient := newRedisClient(redisContainer)
+	res := redisClient.ConfigSet(ctxWOCancel, types.NotifyKeyspaceEventsCmd, types.KeyspacePatternForExpiredEvents)
+	require.NoError(t, res.Err())
+
+	// create consumer1 client
+	consumer1 := createConsumer("111", redisContainer)
+	require.NotNil(t, consumer1)
+	lbsChan1, kspChan1, err := consumer1.Init(ctxWCancel)
+	require.NoError(t, err)
+	require.NotNil(t, lbsChan1)
+	require.NotNil(t, kspChan1)
+
+	// create consumer2 client
+	consumer2 := createConsumer("222", redisContainer)
+	require.NotNil(t, consumer2)
+	lbsChan2, kspChan2, err := consumer2.Init(ctxWOCancel)
+	require.NoError(t, err)
+	require.NotNil(t, lbsChan2)
+	require.NotNil(t, kspChan2)
+
+	addTwoStreamsToLBS(t, redisContainer)
+
+	// create consumer3 client
+	consumer3 := createConsumer("333", redisContainer)
+	require.NotNil(t, consumer3)
+	lbsChan3, kspChan3, err := consumer3.Init(ctxWOCancel)
+	require.NoError(t, err)
+	require.NotNil(t, lbsChan3)
+	require.NotNil(t, kspChan3)
+
+	// get streams owned by consumer1
+	streamsOwnedByConsumer1 := consumer1.StreamsOwned()
+	// kill consumer1
+	cancelFunc()
+	consumer1.Close()
+
+	// consumer2 and consumer3 try to claim at the same time
+	consumer2.Claim(ctxWOCancel, streamsOwnedByConsumer1[0]+":0", "redis-consumer-222")
+	err = consumer3.Claim(ctxWOCancel, streamsOwnedByConsumer1[0]+":0", "redis-consumer-333")
+	require.Error(t, err)
+	require.Equal(t, err, fmt.Errorf("already claimed"))
 }
 
 func TestKspNotifs(t *testing.T) {

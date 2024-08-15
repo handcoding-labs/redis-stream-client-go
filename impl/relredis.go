@@ -97,11 +97,28 @@ func (r *ReliableRedisStreamClient) Init(ctx context.Context) (<-chan *redis.XMe
 
 // Claim claims pending messages from a stream
 func (r *ReliableRedisStreamClient) Claim(ctx context.Context, expiredStreamName string, newConsumerID string) error {
-	// acquire lock on the stream
 	parts := strings.Split(expiredStreamName, ":")
 	streamName := parts[0]
 	idInLBS := parts[1]
 
+	// Claim the stream
+	res := r.redisClient.XClaim(ctx, &redis.XClaimArgs{
+		Stream:   r.lbsName(),
+		Group:    r.lbsGroupName(),
+		Consumer: newConsumerID,
+		MinIdle:  r.hbInterval, // one heartbeat internval has elapsed
+		Messages: []string{idInLBS},
+	})
+
+	if res.Err() != nil {
+		return res.Err()
+	}
+
+	if len(res.Val()) == 0 {
+		return fmt.Errorf("already claimed")
+	}
+
+	// acquire lock on the stream
 	pool := goredis.NewPool(r.redisClient)
 	rs := redsync.New(pool)
 
@@ -124,23 +141,12 @@ func (r *ReliableRedisStreamClient) Claim(ctx context.Context, expiredStreamName
 		return err
 	}
 
+	go r.startExtendingKey(ctx, mutex)
+
 	r.streamLocks[streamName] = &lbsInfo{
 		DataStreamName: streamName,
 		IDInLBS:        idInLBS,
 		Mutex:          mutex,
-	}
-
-	// Claim the stream
-	res := r.redisClient.XClaim(ctx, &redis.XClaimArgs{
-		Stream:   r.lbsName(),
-		Group:    r.lbsGroupName(),
-		Consumer: newConsumerID,
-		MinIdle:  0,
-		Messages: []string{idInLBS},
-	})
-
-	if res.Err() != nil {
-		return res.Err()
 	}
 
 	return nil
