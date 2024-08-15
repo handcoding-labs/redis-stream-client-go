@@ -124,10 +124,11 @@ func TestLBS(t *testing.T) {
 		}
 	}
 
-	consumer1.Close()
+	consumer1.Done(ctx)
+	consumer2.Done(ctx)
+
 	_, ok := <-lbsChan1
 	require.False(t, ok)
-	consumer2.Close()
 	_, ok = <-lbsChan2
 	require.False(t, ok)
 }
@@ -172,13 +173,16 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	streamsOwnedByConsumer1 := consumer1.StreamsOwned()
 	// kill consumer1
 	cancelFunc()
-	consumer1.Close()
 
 	// consumer2 and consumer3 try to claim at the same time
-	consumer2.Claim(ctxWOCancel, streamsOwnedByConsumer1[0]+":0", "redis-consumer-222")
-	err = consumer3.Claim(ctxWOCancel, streamsOwnedByConsumer1[0]+":0", "redis-consumer-333")
+	consumer2.Claim(ctxWOCancel, streamsOwnedByConsumer1[0]+":0")
+	err = consumer3.Claim(ctxWOCancel, streamsOwnedByConsumer1[0]+":0")
 	require.Error(t, err)
 	require.Equal(t, err, fmt.Errorf("already claimed"))
+
+	consumer1.Done(ctxWCancel)
+	consumer2.Done(ctxWOCancel)
+	consumer3.Done(ctxWOCancel)
 }
 
 func TestKspNotifs(t *testing.T) {
@@ -288,7 +292,7 @@ func TestMainFlow(t *testing.T) {
 			require.NotNil(t, notif)
 			require.NotNil(t, notif.Payload)
 			require.Contains(t, notif.Payload, "session")
-			err = consumer2.Claim(consumer2Ctx, notif.Payload, "redis-consumer-222")
+			err = consumer2.Claim(consumer2Ctx, notif.Payload)
 			require.NoError(t, err)
 			res := simpleRedisClient.XInfoStreamFull(context.Background(), "consumer-input", 100)
 			require.NotNil(t, res)
@@ -342,13 +346,8 @@ func TestMainFlow(t *testing.T) {
 	}
 
 	require.True(t, gotNotification)
-	err = consumer2.Done(consumer2Ctx, "session1")
-	require.NoError(t, err)
-	err = consumer2.Done(consumer2Ctx, "session2")
-	require.NoError(t, err)
-
-	consumer1.Close()
-	consumer2.Close()
+	consumer2.Done(consumer2Ctx)
+	consumer1.Done(consumer1Ctx)
 
 	// cancel the context
 	consumer2CancelFunc()
