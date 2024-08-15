@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -40,11 +41,9 @@ func (r *ReliableRedisStreamClient) readLBSStream(ctx context.Context) {
 
 	for {
 		// check if context is done
-		select {
-		case <-ctx.Done():
-			log.Println("Context is done, exiting reading LBS stream")
+		if r.isContextDone(ctx) {
+			log.Println("context is done, returning...")
 			return
-		default:
 		}
 
 		// blocking read on LBS stream
@@ -62,79 +61,86 @@ func (r *ReliableRedisStreamClient) readLBSStream(ctx context.Context) {
 			return
 		}
 
-		for _, stream := range res.Val() {
-			for _, message := range stream.Messages {
-				// has to be an LBS message
-				v, ok := message.Values[types.LBSInput]
-				if !ok {
-					log.Fatal("invalid message on LBS stream, must be an LBS message type")
-					return
-				}
-
-				// unmarshal the message
-				var lbsMessage types.LBSMessage
-				if err := json.Unmarshal([]byte(v.(string)), &lbsMessage); err != nil {
-					log.Fatal("error while unmarshalling LBS message")
-					return
-				}
-
-				if lbsMessage.DataStreamName == "" {
-					log.Fatal("invalid message type on LBS")
-					return
-				}
-
-				// acquire lock
-				mutex := rs.NewMutex(lbsMessage.DataStreamName+":"+message.ID,
-					redsync.WithExpiry(r.hbInterval),
-					redsync.WithFailFast(true),
-					redsync.WithRetryDelay(10*time.Millisecond),
-					redsync.WithSetNXOnExtend(),
-					redsync.WithGenValueFunc(func() (string, error) {
-						return r.consumerID, nil
-					}))
-
-				if err := mutex.Lock(); err != nil {
-					log.Fatal("unable to lock mutex")
-				}
-
-				_, err := mutex.Extend()
-				if err != nil {
-					log.Fatal("error while extending lock")
-					return
-				}
-
-				r.streamLocks[lbsMessage.DataStreamName] = &lbsInfo{
-					DataStreamName: lbsMessage.DataStreamName,
-					IDInLBS:        message.ID,
-					Mutex:          mutex,
-				}
-
-				r.lbsChan <- &message
-
-				// now, keep extending the lock in a separate go routine
-				go func() {
-					for {
-						select {
-						case <-ctx.Done():
-							log.Println("context done, exiting ", r.consumerID)
-							return
-						default:
-						}
-
-						if _, err := mutex.Extend(); err != nil {
-							log.Fatal("failed to extend lock for stream", lbsMessage.DataStreamName, "err: ", err)
-							return
-						}
-
-						log.Println("extended lock for stream", lbsMessage.DataStreamName)
-
-						time.Sleep(r.hbInterval / 2)
-					}
-				}()
-			}
+		if err := r.processLBSMessages(ctx, res.Val(), rs); err != nil {
+			log.Fatal("fatal error while reading lbs: ", err, "exiting...")
+			return
 		}
 
 		// sleep for a while
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func (r *ReliableRedisStreamClient) processLBSMessages(ctx context.Context, streams []redis.XStream, rs *redsync.Redsync) error {
+	for _, stream := range streams {
+		for _, message := range stream.Messages {
+			// has to be an LBS message
+			v, ok := message.Values[types.LBSInput]
+			if !ok {
+				return fmt.Errorf("invalid message on LBS stream, must be an LBS message type")
+			}
+
+			// unmarshal the message
+			var lbsMessage types.LBSMessage
+			if err := json.Unmarshal([]byte(v.(string)), &lbsMessage); err != nil {
+				return fmt.Errorf("error while unmarshalling LBS message")
+			}
+
+			if lbsMessage.DataStreamName == "" {
+				return fmt.Errorf("invalid message type on LBS")
+			}
+
+			// acquire lock
+			mutex := rs.NewMutex(lbsMessage.DataStreamName+":"+message.ID,
+				redsync.WithExpiry(r.hbInterval),
+				redsync.WithFailFast(true),
+				redsync.WithRetryDelay(10*time.Millisecond),
+				redsync.WithSetNXOnExtend(),
+				redsync.WithGenValueFunc(func() (string, error) {
+					return r.consumerID, nil
+				}))
+
+			if err := mutex.Lock(); err != nil {
+				return fmt.Errorf("unable to lock mutex")
+			}
+
+			_, err := mutex.Extend()
+			if err != nil {
+				return fmt.Errorf("error while extending lock")
+			}
+
+			r.streamLocks[lbsMessage.DataStreamName] = &lbsInfo{
+				DataStreamName: lbsMessage.DataStreamName,
+				IDInLBS:        message.ID,
+				Mutex:          mutex,
+			}
+
+			r.lbsChan <- &message
+
+			log.Println("wrote message ", message, " to LBS")
+
+			// now, keep extending the lock in a separate go routine
+			go r.startExtendingKey(ctx, mutex)
+		}
+	}
+
+	return nil
+}
+
+func (r *ReliableRedisStreamClient) startExtendingKey(ctx context.Context, mutex *redsync.Mutex) {
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("context done, exiting ", r.consumerID)
+			return
+		default:
+		}
+
+		if _, err := mutex.Extend(); err != nil {
+			log.Fatal("failed to extend lock for stream err: ", err)
+			return
+		}
+
+		time.Sleep(r.hbInterval / 2)
 	}
 }

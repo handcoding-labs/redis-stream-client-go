@@ -3,6 +3,7 @@ package impl
 import (
 	"bburli/redis-stream-client-go/types"
 	"context"
+	"log"
 )
 
 func (r *ReliableRedisStreamClient) lbsGroupName() string {
@@ -31,4 +32,14 @@ func (r *ReliableRedisStreamClient) StreamsOwned() (streamsOwned []string) {
 	}
 
 	return
+}
+
+func (r *ReliableRedisStreamClient) isContextDone(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		log.Println("Context is done, exiting reading LBS stream")
+		return true
+	default:
+		return false
+	}
 }
