@@ -166,12 +166,6 @@ func (r *ReliableRedisStreamClient) Done(ctx context.Context, streamName string)
 		return res.Err()
 	}
 
-	// evict any waiting clients
-	res = r.redisClient.ClientUnblock(ctx, r.redisClient.ClientID(ctx).Val())
-	if res.Err() != nil {
-		log.Fatal("client unblock failed!")
-	}
-
 	// delete volatile key from streamLocks
 	if ok {
 		delete(r.streamLocks, streamName)

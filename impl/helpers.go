@@ -32,17 +32,3 @@ func (r *ReliableRedisStreamClient) StreamsOwned() (streamsOwned []string) {
 
 	return
 }
-
-func (r *ReliableRedisStreamClient) Giveup(ctx context.Context) error {
-	for _, s := range r.streamLocks {
-		err := r.Done(ctx, s.DataStreamName)
-		if err != nil {
-			return err
-		}
-
-		// cancel lbs context explicitly
-		r.lbsCtxCancelFunc()
-	}
-
-	return nil
-}
