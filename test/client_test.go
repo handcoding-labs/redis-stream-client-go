@@ -1,8 +1,8 @@
 package test
 
 import (
-	"bburli/redis-stream-client/source/impl"
-	"bburli/redis-stream-client/source/types"
+	"bburli/redis-stream-client-go/impl"
+	"bburli/redis-stream-client-go/types"
 	"context"
 	"encoding/json"
 	"os"
@@ -48,10 +48,12 @@ func TestNewRedisStreamClient(t *testing.T) {
 	redisContainer := setupSuite(t)
 
 	os.Setenv("POD_NAME", "111")
+	ctxWithCancel := context.Background()
+	ctx, cancel := context.WithCancel(ctxWithCancel)
 	// create a new redis client
 	consumer := impl.NewRedisStreamClient(newRedisClient(redisContainer), time.Millisecond*10, "consumer")
 	require.NotNil(t, consumer)
-	lbsChan, kspChan, err := consumer.Init(context.Background())
+	lbsChan, kspChan, err := consumer.Init(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, lbsChan)
 	require.NotNil(t, kspChan)
@@ -74,20 +76,24 @@ func TestNewRedisStreamClient(t *testing.T) {
 	require.NoError(t, err)
 
 	// read from lbsChan
-	i := 0
 	success := false
+	i := 0
 
 	for {
 
-		if i == 10 {
+		if i == 10 || success {
 			break
 		}
 
 		select {
 		case msg := <-lbsChan:
 			require.NotNil(t, msg)
-			require.Equal(t, "session1", msg.Values["lbs"].(types.LBSMessage).DataStreamName)
-			require.Equal(t, "value1", msg.Values["lbs"].(types.LBSMessage).Info["key1"])
+			var lbsMessage types.LBSMessage
+			require.NoError(t, json.Unmarshal([]byte(msg.Values[types.LBSInput].(string)), &lbsMessage))
+			require.NotNil(t, lbsMessage)
+			require.Equal(t, "session1", lbsMessage.DataStreamName)
+			require.Equal(t, "value1", lbsMessage.Info["key1"])
+			require.NoError(t, consumer.Done(ctx, lbsMessage.DataStreamName))
 			success = true
 		case <-time.After(time.Second):
 		}
@@ -95,5 +101,7 @@ func TestNewRedisStreamClient(t *testing.T) {
 		i++
 	}
 
+	// cancel the context
+	cancel()
 	require.True(t, success)
 }
