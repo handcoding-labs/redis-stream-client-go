@@ -42,7 +42,6 @@ func (r *ReliableRedisStreamClient) readLBSStream(ctx context.Context) {
 	for {
 		// check if context is done
 		if r.isContextDone(ctx) {
-			r.Done()
 			return
 		}
 
@@ -134,7 +133,7 @@ func (r *ReliableRedisStreamClient) processLBSMessages(ctx context.Context, stre
 func (r *ReliableRedisStreamClient) startExtendingKey(ctx context.Context, mutex *redsync.Mutex) {
 	for {
 		if r.isContextDone(ctx) {
-			r.Done()
+			return
 		}
 
 		if _, err := mutex.Extend(); err != nil {

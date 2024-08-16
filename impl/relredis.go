@@ -34,6 +34,7 @@ type ReliableRedisStreamClient struct {
 	serviceName string
 	// redis pub sub subscription
 	pubSub *redis.PubSub
+	// lock is a mutex used to control operations on channels
 }
 
 // NewRedisStreamClient creates a new RedisStreamClient
@@ -146,12 +147,11 @@ func (r *ReliableRedisStreamClient) Claim(ctx context.Context, mutexKey string) 
 		return err
 	}
 
-	go r.startExtendingKey(ctx, mutex)
-
 	// seed the mutex
 	lbsInfo.Mutex = mutex
-
 	r.streamLocks[lbsInfo.DataStreamName] = lbsInfo
+
+	go r.startExtendingKey(ctx, mutex)
 
 	return nil
 }
@@ -181,6 +181,8 @@ func (r *ReliableRedisStreamClient) DoneDataStream(ctx context.Context, dataStre
 		delete(r.streamLocks, dataStreamName)
 	}
 
+	r.lbsCtxCancelFunc()
+
 	return nil
 }
 
@@ -199,11 +201,7 @@ func (r *ReliableRedisStreamClient) Done() {
 }
 
 func (r *ReliableRedisStreamClient) cleanup() {
-	// safe close the chan
-	_, ok := <-r.lbsChan
-	if ok {
-		close(r.lbsChan)
-	}
+	close(r.lbsChan)
 
 	err := r.pubSub.Close()
 	if err != nil {
