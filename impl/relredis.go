@@ -199,7 +199,12 @@ func (r *ReliableRedisStreamClient) Done() {
 }
 
 func (r *ReliableRedisStreamClient) cleanup() {
-	close(r.lbsChan)
+	// safe close the chan
+	_, ok := <-r.lbsChan
+	if ok {
+		close(r.lbsChan)
+	}
+
 	err := r.pubSub.Close()
 	if err != nil {
 		log.Println("error in closing redis pub/sub")
