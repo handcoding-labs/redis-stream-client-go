@@ -124,8 +124,8 @@ func TestLBS(t *testing.T) {
 		}
 	}
 
-	consumer1.Done(ctx)
-	consumer2.Done(ctx)
+	consumer1.Done()
+	consumer2.Done()
 
 	_, ok := <-lbsChan1
 	require.False(t, ok)
@@ -180,9 +180,9 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, err, fmt.Errorf("already claimed"))
 
-	consumer1.Done(ctxWCancel)
-	consumer2.Done(ctxWOCancel)
-	consumer3.Done(ctxWOCancel)
+	consumer1.Done()
+	consumer2.Done()
+	consumer3.Done()
 }
 
 func TestKspNotifs(t *testing.T) {
@@ -346,8 +346,8 @@ func TestMainFlow(t *testing.T) {
 	}
 
 	require.True(t, gotNotification)
-	consumer2.Done(consumer2Ctx)
-	consumer1.Done(consumer1Ctx)
+	consumer2.Done()
+	consumer1.Done()
 
 	// cancel the context
 	consumer2CancelFunc()

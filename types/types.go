@@ -28,5 +28,5 @@ type RedisStreamClient interface {
 	// Done marks the end of processing the stream
 	//
 	// should be called when consumer is done processing the data stream.
-	Done(ctx context.Context)
+	Done()
 }

@@ -185,7 +185,9 @@ func (r *ReliableRedisStreamClient) DoneDataStream(ctx context.Context, dataStre
 }
 
 // Done marks the end of processing for a client
-func (r *ReliableRedisStreamClient) Done(ctx context.Context) {
+func (r *ReliableRedisStreamClient) Done() {
+	ctx := context.Background()
+
 	for streamName := range r.streamLocks {
 		if err := r.DoneDataStream(ctx, streamName); err != nil {
 			log.Println("error", err, " occured while marking stream", streamName, " as done; moving on to other streams ...")
