@@ -34,7 +34,6 @@ type ReliableRedisStreamClient struct {
 	serviceName string
 	// redis pub sub subscription
 	pubSub *redis.PubSub
-	// lock is a mutex used to control operations on channels
 }
 
 // NewRedisStreamClient creates a new RedisStreamClient
