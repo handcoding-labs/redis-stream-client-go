@@ -23,7 +23,7 @@ func createByMutexKey(mutexKey string) (*lbsInfo, error) {
 	parts := strings.Split(mutexKey, types.MutexKeySep)
 	// must be in format: data_stream_name:message_id_in_lbs
 	if len(parts) == 1 || len(parts) > 2 {
-		return nil, fmt.Errorf("invalid mutex key format: ", mutexKey)
+		return nil, fmt.Errorf("invalid mutex key format: %s", mutexKey)
 	}
 
 	return &lbsInfo{
