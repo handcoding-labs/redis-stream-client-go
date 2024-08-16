@@ -90,8 +90,13 @@ func (r *ReliableRedisStreamClient) processLBSMessages(ctx context.Context, stre
 				return fmt.Errorf("invalid message type on LBS")
 			}
 
+			lbsInfo, err := createByParts(lbsMessage.DataStreamName, message.ID)
+			if err != nil {
+				return err
+			}
+
 			// acquire lock
-			mutex := rs.NewMutex(lbsMessage.DataStreamName+":"+message.ID,
+			mutex := rs.NewMutex(lbsInfo.getMutexKey(),
 				redsync.WithExpiry(r.hbInterval),
 				redsync.WithFailFast(true),
 				redsync.WithRetryDelay(10*time.Millisecond),
@@ -104,16 +109,15 @@ func (r *ReliableRedisStreamClient) processLBSMessages(ctx context.Context, stre
 				return fmt.Errorf("unable to lock mutex")
 			}
 
-			_, err := mutex.Extend()
+			_, err = mutex.Extend()
 			if err != nil {
 				return fmt.Errorf("error while extending lock")
 			}
 
-			r.streamLocks[lbsMessage.DataStreamName] = &lbsInfo{
-				DataStreamName: lbsMessage.DataStreamName,
-				IDInLBS:        message.ID,
-				Mutex:          mutex,
-			}
+			// now seed the mutex
+			lbsInfo.Mutex = mutex
+
+			r.streamLocks[lbsMessage.DataStreamName] = lbsInfo
 
 			r.lbsChan <- &message
 
@@ -129,8 +133,11 @@ func (r *ReliableRedisStreamClient) processLBSMessages(ctx context.Context, stre
 
 func (r *ReliableRedisStreamClient) startExtendingKey(ctx context.Context, mutex *redsync.Mutex) {
 	for {
-		if r.isContextDone(ctx) {
+		select {
+		case <-ctx.Done():
+			log.Println("context done, exiting ", r.consumerID)
 			return
+		default:
 		}
 
 		if _, err := mutex.Extend(); err != nil {

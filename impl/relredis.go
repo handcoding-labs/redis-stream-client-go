@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/go-redsync/redsync/v4"
@@ -101,10 +100,11 @@ func (r *ReliableRedisStreamClient) Init(ctx context.Context) (<-chan *redis.XMe
 }
 
 // Claim claims pending messages from a stream
-func (r *ReliableRedisStreamClient) Claim(ctx context.Context, expiredStreamName string) error {
-	parts := strings.Split(expiredStreamName, ":")
-	streamName := parts[0]
-	idInLBS := parts[1]
+func (r *ReliableRedisStreamClient) Claim(ctx context.Context, mutexKey string) error {
+	lbsInfo, err := createByMutexKey(mutexKey)
+	if err != nil {
+		return err
+	}
 
 	// Claim the stream
 	res := r.redisClient.XClaim(ctx, &redis.XClaimArgs{
@@ -112,7 +112,7 @@ func (r *ReliableRedisStreamClient) Claim(ctx context.Context, expiredStreamName
 		Group:    r.lbsGroupName(),
 		Consumer: r.consumerID,
 		MinIdle:  r.hbInterval, // one heartbeat internval has elapsed
-		Messages: []string{idInLBS},
+		Messages: []string{lbsInfo.IDInLBS},
 	})
 
 	if res.Err() != nil {
@@ -127,7 +127,7 @@ func (r *ReliableRedisStreamClient) Claim(ctx context.Context, expiredStreamName
 	pool := goredis.NewPool(r.redisClient)
 	rs := redsync.New(pool)
 
-	mutex := rs.NewMutex(expiredStreamName,
+	mutex := rs.NewMutex(lbsInfo.getMutexKey(),
 		redsync.WithExpiry(r.hbInterval),
 		redsync.WithFailFast(true),
 		redsync.WithRetryDelay(10*time.Millisecond),
@@ -141,18 +141,17 @@ func (r *ReliableRedisStreamClient) Claim(ctx context.Context, expiredStreamName
 		return err
 	}
 
-	_, err := mutex.Extend()
+	_, err = mutex.Extend()
 	if err != nil {
 		return err
 	}
 
 	go r.startExtendingKey(ctx, mutex)
 
-	r.streamLocks[streamName] = &lbsInfo{
-		DataStreamName: streamName,
-		IDInLBS:        idInLBS,
-		Mutex:          mutex,
-	}
+	// seed the mutex
+	lbsInfo.Mutex = mutex
+
+	r.streamLocks[lbsInfo.DataStreamName] = lbsInfo
 
 	return nil
 }
