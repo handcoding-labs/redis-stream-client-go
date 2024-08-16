@@ -138,7 +138,7 @@ func (r *ReliableRedisStreamClient) startExtendingKey(ctx context.Context, mutex
 		}
 
 		if _, err := mutex.Extend(); err != nil {
-			log.Fatal("failed to extend lock for stream err: ", err)
+			log.Fatal("failed to extend lock for stream:", r.consumerID)
 			return
 		}
 
