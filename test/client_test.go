@@ -180,7 +180,8 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, err, fmt.Errorf("already claimed"))
 
-	consumer1.Done()
+	// Done is not called on consumer1 as it's crashed
+
 	consumer2.Done()
 	consumer3.Done()
 }
@@ -347,7 +348,8 @@ func TestMainFlow(t *testing.T) {
 
 	require.True(t, gotNotification)
 	consumer2.Done()
-	consumer1.Done()
+	// no Done is called on consumer1 because it crashed
+	// either Done is called or context is cancelled
 
 	// cancel the context
 	consumer2CancelFunc()
@@ -355,16 +357,9 @@ func TestMainFlow(t *testing.T) {
 	// calling here to shut up the ctx leak error message
 	consumer1CancelFunc()
 
-	// kspchan must be closed automatically
-	v, ok := <-kspChan1
+	// kspchan may contain values as consumer1 crashes
+	v, ok := <-kspChan2
 	require.Nil(t, v)
-	require.False(t, ok)
-	v, ok = <-kspChan2
-	require.Nil(t, v)
-	require.False(t, ok)
-
-	// lbs chan is also closed
-	_, ok = <-lbsChan1
 	require.False(t, ok)
 }
 
