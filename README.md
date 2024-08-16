@@ -12,7 +12,7 @@ When one (or more) of the consumers fail (crash, get stuck for abnormal period o
 
 ![Redis streams failure recovery](./imgs/redis_stream_failure_recovery.png)
 
-This is good but there are two requirements that it doesn't meet:
+However, there are two requirements that it doesn't meet:
 1. Recovery depends on how soon the crashed consumer can come back up and claim. This is normally a small time (few seconds) but sometimes it can be high due to startup logic.
 2. When a consumer gets stuck (GC or some such stop-the-world process) then the processing is stuck.
 

@@ -12,4 +12,5 @@ const (
 	PodName                         = "POD_NAME"
 	PodIP                           = "POD_IP"
 	LBSInput                        = "lbs-input"
+	MutexKeySep                     = ":"
 )
