@@ -76,7 +76,7 @@ func TestLBS(t *testing.T) {
 	lbsChan2, _, err = consumer2.Init(ctx)
 	require.NoError(t, err)
 
-	addTwoStreamsToLBS(t, redisContainer)
+	addNStreamsToLBS(t, redisContainer, 2)
 
 	// load balanced stream distributes messages to different consumers in a load balanced way
 	// so we keep track of which stream was given to consumer1 so that we can check if consumer2 gets another one
@@ -96,12 +96,12 @@ func TestLBS(t *testing.T) {
 			if expectedMsgConsumer1 != "" {
 				require.Equal(t, lbsMessage.DataStreamName, expectedMsgConsumer1)
 			} else {
-				if lbsMessage.DataStreamName == "session1" {
-					expectedMsgConsumer2 = "session2"
-					require.Equal(t, lbsMessage.Info["key1"], "value1")
-				} else {
+				if lbsMessage.DataStreamName == "session0" {
 					expectedMsgConsumer2 = "session1"
-					require.Equal(t, lbsMessage.Info["key2"], "value2")
+					require.Equal(t, lbsMessage.Info["key0"], "value0")
+				} else {
+					expectedMsgConsumer2 = "session0"
+					require.Equal(t, lbsMessage.Info["key1"], "value1")
 				}
 			}
 		case msg, ok := <-lbsChan2:
@@ -113,12 +113,12 @@ func TestLBS(t *testing.T) {
 			if expectedMsgConsumer2 != "" {
 				require.Equal(t, lbsMessage.DataStreamName, expectedMsgConsumer2)
 			} else {
-				if lbsMessage.DataStreamName == "session1" {
-					expectedMsgConsumer1 = "session2"
-					require.Equal(t, lbsMessage.Info["key1"], "value1")
-				} else {
+				if lbsMessage.DataStreamName == "session0" {
 					expectedMsgConsumer1 = "session1"
-					require.Equal(t, lbsMessage.Info["key2"], "value2")
+					require.Equal(t, lbsMessage.Info["key0"], "value0")
+				} else {
+					expectedMsgConsumer1 = "session0"
+					require.Equal(t, lbsMessage.Info["key1"], "value1")
 				}
 			}
 		}
@@ -159,7 +159,7 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	require.NotNil(t, lbsChan2)
 	require.NotNil(t, kspChan2)
 
-	addTwoStreamsToLBS(t, redisContainer)
+	addNStreamsToLBS(t, redisContainer, 2)
 
 	// create consumer3 client
 	consumer3 := createConsumer("333", redisContainer)
@@ -226,6 +226,66 @@ func TestKspNotifs(t *testing.T) {
 	require.NoError(t, redisClient.Close())
 }
 
+func TestKspNotifsBulk(t *testing.T) {
+	redisContainer := setupSuite(t)
+
+	consumers := make(map[int]types.RedisStreamClient)
+	cancelFuncs := make(map[int]context.CancelFunc)
+	var kspChans []<-chan *redisgo.Message
+
+	// create 10 consumers
+	for i := range 10 {
+		ctxWithCancel := context.TODO()
+		ctx, cancel := context.WithCancel(ctxWithCancel)
+
+		// create consumer1 client
+		consumer := createConsumer(fmt.Sprint(i), redisContainer)
+		_, kspChan, err := consumer.Init(ctx)
+		require.NoError(t, err)
+		kspChans = append(kspChans, kspChan)
+
+		consumers[i] = consumer
+		cancelFuncs[i] = cancel
+	}
+
+	// add 1000 streams
+	addNStreamsToLBS(t, redisContainer, 1000)
+	// expected count of streams that will expire
+	expiredStreamsCount := len(consumers[3].StreamsOwned()) + len(consumers[7].StreamsOwned())
+
+	// start listening to kspChans and claim if we get a notification
+	for i, ch := range kspChans {
+		if i != 3 && i != 7 {
+			go listenToKsp(t, ch, consumers, i, expiredStreamsCount)
+		}
+	}
+
+	// give some time for all consumers to start listening
+	time.Sleep(time.Second)
+
+	// kill 2 consumers randomly
+	cancelFuncs[3]()
+	cancelFuncs[7]()
+
+	// give time for expiry to kick in
+	time.Sleep(3 * time.Second)
+
+	// check claims and distribution
+	// 200 streams are disconnected so all stream count for all consumers must still total 1000
+	totalExpected := 1000
+	totalActual := 0
+
+	for i, c := range consumers {
+		// print for info
+		//log.Println("consumer ", c.ID(), " has ", c.StreamsOwned())
+		if i != 3 && i != 7 {
+			totalActual += len(c.StreamsOwned())
+		}
+	}
+
+	require.Equal(t, totalActual, totalExpected)
+}
+
 func TestMainFlow(t *testing.T) {
 	// Main flow:
 	// there is one producer and two consumers: consumer1 and consumer2
@@ -260,7 +320,7 @@ func TestMainFlow(t *testing.T) {
 	require.NotNil(t, lbsChan2)
 	require.NotNil(t, kspChan2)
 
-	addTwoStreamsToLBS(t, redisContainer)
+	addNStreamsToLBS(t, redisContainer, 2)
 
 	simpleRedisClient := newRedisClient(redisContainer)
 
@@ -327,7 +387,7 @@ func TestMainFlow(t *testing.T) {
 				require.NoError(t, json.Unmarshal([]byte(msg.Values[types.LBSInput].(string)), &lbsMessage))
 				require.NotNil(t, lbsMessage)
 				require.Contains(t, lbsMessage.DataStreamName, "session")
-				require.Contains(t, lbsMessage.Info["key1"], "value")
+				require.Contains(t, lbsMessage.Info["key0"], "value")
 				streamsPickedup++
 			}
 		case msg, ok := <-lbsChan2:
@@ -337,7 +397,7 @@ func TestMainFlow(t *testing.T) {
 				require.NoError(t, json.Unmarshal([]byte(msg.Values[types.LBSInput].(string)), &lbsMessage))
 				require.NotNil(t, lbsMessage)
 				require.Contains(t, lbsMessage.DataStreamName, "session")
-				require.Contains(t, lbsMessage.Info["key2"], "value")
+				require.Contains(t, lbsMessage.Info["key1"], "value")
 				streamsPickedup++
 			}
 		case <-time.After(time.Second):
@@ -363,43 +423,61 @@ func TestMainFlow(t *testing.T) {
 	require.False(t, ok)
 }
 
-func addTwoStreamsToLBS(t *testing.T, redisContainer *redis.RedisContainer) {
-	lbsMsg1, _ := json.Marshal(types.LBSMessage{
-		DataStreamName: "session1",
-		Info: map[string]interface{}{
-			"key1": "value1",
-		},
-	})
-
-	lbsMsg2, _ := json.Marshal(types.LBSMessage{
-		DataStreamName: "session2",
-		Info: map[string]interface{}{
-			"key2": "value2",
-		},
-	})
+func addNStreamsToLBS(t *testing.T, redisContainer *redis.RedisContainer, n int) {
+	stringify := func(name string, i int) string {
+		return fmt.Sprintf("%s%d", name, i)
+	}
 
 	producer := newRedisClient(redisContainer)
 	defer producer.Close()
 
-	_, err := producer.XAdd(context.Background(), &redisgo.XAddArgs{
-		Stream: "consumer-input",
-		Values: map[string]any{
-			types.LBSInput: string(lbsMsg1),
-		},
-	}).Result()
-	require.NoError(t, err)
+	for i := range n {
+		lbsMsg, _ := json.Marshal(types.LBSMessage{
+			DataStreamName: stringify("session", i),
+			Info: map[string]interface{}{
+				stringify("key", i): stringify("value", i),
+			},
+		})
 
-	_, err = producer.XAdd(context.Background(), &redisgo.XAddArgs{
-		Stream: "consumer-input",
-		Values: map[string]any{
-			types.LBSInput: string(lbsMsg2),
-		},
-	}).Result()
-	require.NoError(t, err)
+		_, err := producer.XAdd(context.Background(), &redisgo.XAddArgs{
+			Stream: "consumer-input",
+			Values: map[string]any{
+				types.LBSInput: string(lbsMsg),
+			},
+		}).Result()
+		require.NoError(t, err)
+	}
 }
 
 func createConsumer(name string, redisContainer *redis.RedisContainer) types.RedisStreamClient {
 	_ = os.Setenv("POD_NAME", name)
 	// create a new redis client
-	return impl.NewRedisStreamClient(newRedisClient(redisContainer), time.Millisecond*20, "consumer")
+	return impl.NewRedisStreamClient(newRedisClient(redisContainer), time.Second, "consumer")
+}
+
+func listenToKsp(t *testing.T, kspChan <-chan *redisgo.Message, consumers map[int]types.RedisStreamClient, i int, expiredStreamCount int) {
+	totalClaimed := 0
+
+	for {
+		if totalClaimed == expiredStreamCount {
+			break
+		}
+
+		select {
+		case notif, ok := <-kspChan:
+			require.True(t, ok)
+			require.NotNil(t, notif)
+			require.NotNil(t, notif.Payload)
+			require.Contains(t, notif.Payload, "session")
+			consumerCurrent := len(consumers[i].StreamsOwned())
+			err := consumers[i].Claim(context.Background(), notif.Payload)
+			if err == nil {
+				log.Println("claimed ", notif.Payload, " by ", consumers[i].ID())
+			} else {
+				log.Println(err)
+			}
+			totalClaimed += len(consumers[i].StreamsOwned()) - consumerCurrent
+		default:
+		}
+	}
 }

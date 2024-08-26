@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-redsync/redsync/v4"
@@ -119,7 +120,12 @@ func (r *ReliableRedisStreamClient) Claim(ctx context.Context, mutexKey string) 
 		return res.Err()
 	}
 
-	if len(res.Val()) == 0 {
+	claimed, err := res.Result()
+	if err != nil {
+		return err
+	}
+
+	if len(claimed) == 0 {
 		return fmt.Errorf("already claimed")
 	}
 
@@ -137,7 +143,7 @@ func (r *ReliableRedisStreamClient) Claim(ctx context.Context, mutexKey string) 
 		}))
 
 	// lock the stream
-	if err := mutex.Lock(); err != nil {
+	if err := mutex.Lock(); err != nil && strings.Contains(err.Error(), "lock already taken") {
 		return err
 	}
 
@@ -169,15 +175,15 @@ func (r *ReliableRedisStreamClient) DoneDataStream(ctx context.Context, dataStre
 		return err
 	}
 
+	// delete volatile key from streamLocks
+	if ok {
+		delete(r.streamLocks, dataStreamName)
+	}
+
 	// Acknowledge the message
 	res := r.redisClient.XAck(ctx, r.lbsName(), r.lbsGroupName(), lbsInfo.IDInLBS)
 	if res.Err() != nil {
 		return res.Err()
-	}
-
-	// delete volatile key from streamLocks
-	if ok {
-		delete(r.streamLocks, dataStreamName)
 	}
 
 	r.lbsCtxCancelFunc()
