@@ -120,7 +120,7 @@ func (r *ReliableRedisStreamClient) processLBSMessages(ctx context.Context, stre
 
 			r.lbsChan <- &message
 
-			log.Println("wrote message ", message, " to LBS")
+			//log.Println("wrote message ", message, " to LBS")
 
 			// now, keep extending the lock in a separate go routine
 			go r.startExtendingKey(ctx, mutex)
