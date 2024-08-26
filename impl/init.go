@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/go-redsync/redsync/v4"
@@ -104,13 +105,8 @@ func (r *ReliableRedisStreamClient) processLBSMessages(ctx context.Context, stre
 					return r.consumerID, nil
 				}))
 
-			if err := mutex.Lock(); err != nil {
-				return fmt.Errorf("unable to lock mutex")
-			}
-
-			_, err = mutex.Extend()
-			if err != nil {
-				return fmt.Errorf("error while extending lock")
+			if err := r.lockAndExtend(mutex); err != nil {
+				return err
 			}
 
 			// now seed the mutex
@@ -136,7 +132,7 @@ func (r *ReliableRedisStreamClient) startExtendingKey(ctx context.Context, mutex
 			return
 		}
 
-		if _, err := mutex.Extend(); err != nil {
+		if _, err := mutex.Extend(); err != nil && !strings.Contains(err.Error(), "lock already taken") {
 			log.Fatal("failed to extend lock for stream:", r.consumerID, "err : ", err)
 			return
 		}

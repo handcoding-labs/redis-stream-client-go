@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/go-redsync/redsync/v4"
@@ -143,12 +142,7 @@ func (r *ReliableRedisStreamClient) Claim(ctx context.Context, mutexKey string) 
 		}))
 
 	// lock the stream
-	if err := mutex.Lock(); err != nil && strings.Contains(err.Error(), "lock already taken") {
-		return err
-	}
-
-	_, err = mutex.Extend()
-	if err != nil {
+	if err := r.lockAndExtend(mutex); err != nil {
 		return err
 	}
 

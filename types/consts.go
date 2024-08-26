@@ -13,4 +13,5 @@ const (
 	PodIP                           = "POD_IP"
 	LBSInput                        = "lbs-input"
 	MutexKeySep                     = ":"
+	LockAlreadyTakenErrMsg          = "lock already taken"
 )
