@@ -3,6 +3,9 @@ package impl
 import (
 	"bburli/redis-stream-client-go/types"
 	"context"
+	"strings"
+
+	"github.com/go-redsync/redsync/v4"
 )
 
 func (r *ReliableRedisStreamClient) lbsGroupName() string {
@@ -40,4 +43,19 @@ func (r *ReliableRedisStreamClient) isContextDone(ctx context.Context) bool {
 	default:
 		return false
 	}
+}
+
+func (r *ReliableRedisStreamClient) lockAndExtend(mutex *redsync.Mutex) error {
+	lockAlreadyTaken := func(err error) bool { return strings.Contains(err.Error(), types.LockAlreadyTakenErrMsg) }
+
+	if err := mutex.Lock(); err != nil && !lockAlreadyTaken(err) {
+		return err
+	}
+
+	_, err := mutex.Extend()
+	if err != nil && !lockAlreadyTaken(err) {
+		return err
+	}
+
+	return nil
 }
