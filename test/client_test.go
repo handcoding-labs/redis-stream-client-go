@@ -470,12 +470,7 @@ func listenToKsp(t *testing.T, kspChan <-chan *redisgo.Message, consumers map[in
 			require.NotNil(t, notif.Payload)
 			require.Contains(t, notif.Payload, "session")
 			consumerCurrent := len(consumers[i].StreamsOwned())
-			err := consumers[i].Claim(context.Background(), notif.Payload)
-			if err == nil {
-				log.Println("claimed ", notif.Payload, " by ", consumers[i].ID())
-			} else {
-				log.Println(err)
-			}
+			consumers[i].Claim(context.Background(), notif.Payload)
 			totalClaimed += len(consumers[i].StreamsOwned()) - consumerCurrent
 		default:
 		}
