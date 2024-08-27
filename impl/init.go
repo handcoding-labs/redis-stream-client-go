@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/go-redsync/redsync/v4"
@@ -132,8 +131,7 @@ func (r *ReliableRedisStreamClient) startExtendingKey(ctx context.Context, mutex
 			return
 		}
 
-		if _, err := mutex.Extend(); err != nil && !strings.Contains(err.Error(), "lock already taken") {
-			log.Fatal("failed to extend lock for stream:", r.consumerID, "err : ", err)
+		if err := r.lockAndExtend(mutex); err != nil {
 			return
 		}
 
