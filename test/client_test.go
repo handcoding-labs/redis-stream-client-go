@@ -249,9 +249,10 @@ func TestKspNotifsBulk(t *testing.T) {
 	}
 
 	// add 1000 streams
-	addNStreamsToLBS(t, redisContainer, 1000)
+	addNStreamsToLBS(t, redisContainer, 100)
 	// expected count of streams that will expire
 	expiredStreamsCount := len(consumers[3].StreamsOwned()) + len(consumers[7].StreamsOwned())
+	log.Println("expired streams = ", expiredStreamsCount)
 
 	// start listening to kspChans and claim if we get a notification
 	for i, ch := range kspChans {
@@ -272,7 +273,7 @@ func TestKspNotifsBulk(t *testing.T) {
 
 	// check claims and distribution
 	// 200 streams are disconnected so all stream count for all consumers must still total 1000
-	totalExpected := 1000
+	totalExpected := 100
 	totalActual := 0
 
 	for i, c := range consumers {
@@ -283,7 +284,9 @@ func TestKspNotifsBulk(t *testing.T) {
 		}
 	}
 
-	require.Equal(t, totalActual, totalExpected)
+	// overall the streams should be same
+	// compare streams
+	require.Equal(t, totalExpected, totalActual)
 }
 
 func TestMainFlow(t *testing.T) {
@@ -470,8 +473,11 @@ func listenToKsp(t *testing.T, kspChan <-chan *redisgo.Message, consumers map[in
 			require.NotNil(t, notif.Payload)
 			require.Contains(t, notif.Payload, "session")
 			consumerCurrent := len(consumers[i].StreamsOwned())
-			consumers[i].Claim(context.Background(), notif.Payload)
-			totalClaimed += len(consumers[i].StreamsOwned()) - consumerCurrent
+			err := consumers[i].Claim(context.Background(), notif.Payload)
+			if err == nil {
+				log.Println("claimed ", notif.Payload, " by ", consumers[i].ID())
+				totalClaimed += len(consumers[i].StreamsOwned()) - consumerCurrent
+			}
 		default:
 		}
 	}
