@@ -272,7 +272,7 @@ func TestKspNotifsBulk(t *testing.T) {
 	time.Sleep(3 * time.Second)
 
 	// check claims and distribution
-	// 200 streams are disconnected so all stream count for all consumers must still total 1000
+	// some streams are disconnected but all stream count for all consumers must still total 1000
 	totalExpected := 100
 	totalActual := 0
 
