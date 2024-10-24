@@ -111,7 +111,7 @@ func (r *ReliableRedisStreamClient) Claim(ctx context.Context, mutexKey string) 
 		Stream:   r.lbsName(),
 		Group:    r.lbsGroupName(),
 		Consumer: r.consumerID,
-		MinIdle:  r.hbInterval, // one heartbeat internval has elapsed
+		MinIdle:  r.hbInterval, // one heartbeat interval has elapsed
 		Messages: []string{lbsInfo.IDInLBS},
 	})
 
@@ -128,7 +128,6 @@ func (r *ReliableRedisStreamClient) Claim(ctx context.Context, mutexKey string) 
 		return fmt.Errorf("already claimed")
 	}
 
-	// acquire lock on the stream
 	pool := goredis.NewPool(r.redisClient)
 	rs := redsync.New(pool)
 
@@ -146,11 +145,11 @@ func (r *ReliableRedisStreamClient) Claim(ctx context.Context, mutexKey string) 
 		return err
 	}
 
+	go r.startExtendingKey(ctx, mutex)
+
 	// seed the mutex
 	lbsInfo.Mutex = mutex
 	r.streamLocks[lbsInfo.DataStreamName] = lbsInfo
-
-	go r.startExtendingKey(ctx, mutex)
 
 	return nil
 }
@@ -162,16 +161,16 @@ func (r *ReliableRedisStreamClient) DoneDataStream(ctx context.Context, dataStre
 		return fmt.Errorf("stream not found")
 	}
 
+	// delete volatile key from streamLocks
+	if ok {
+		delete(r.streamLocks, dataStreamName)
+	}
+
 	// unlock the stream
 	ok, err := lbsInfo.Mutex.Unlock()
 	log.Println("Unlocking stream", dataStreamName, "done: ", ok, "err: ", err)
 	if err != nil && !errors.Is(errors.Unwrap(err), redsync.ErrLockAlreadyExpired) {
 		return err
-	}
-
-	// delete volatile key from streamLocks
-	if ok {
-		delete(r.streamLocks, dataStreamName)
 	}
 
 	// Acknowledge the message

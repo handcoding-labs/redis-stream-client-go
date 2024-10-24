@@ -227,13 +227,14 @@ func TestKspNotifs(t *testing.T) {
 }
 
 func TestKspNotifsBulk(t *testing.T) {
+	totalStreams := 1000
+
 	redisContainer := setupSuite(t)
 
 	consumers := make(map[int]types.RedisStreamClient)
 	cancelFuncs := make(map[int]context.CancelFunc)
 	var kspChans []<-chan *redisgo.Message
 
-	// create 10 consumers
 	for i := range 10 {
 		ctxWithCancel := context.TODO()
 		ctx, cancel := context.WithCancel(ctxWithCancel)
@@ -249,7 +250,8 @@ func TestKspNotifsBulk(t *testing.T) {
 	}
 
 	// add 1000 streams
-	addNStreamsToLBS(t, redisContainer, 100)
+	addNStreamsToLBS(t, redisContainer, totalStreams)
+
 	// expected count of streams that will expire
 	expiredStreamsCount := len(consumers[3].StreamsOwned()) + len(consumers[7].StreamsOwned())
 	log.Println("expired streams = ", expiredStreamsCount)
@@ -273,14 +275,43 @@ func TestKspNotifsBulk(t *testing.T) {
 
 	// check claims and distribution
 	// some streams are disconnected but all stream count for all consumers must still total 1000
-	totalExpected := 100
-	totalActual := 0
+	totalExpected := int64(totalStreams)
+	totalActual := int64(0)
+
+	/*rc := newRedisClient(redisContainer)
+	res := rc.XInfoStreamFull(context.Background(), "consumer-input", 2000)
+	require.NoError(t, res.Err())
+
+	streamRes := res.Val()
+	require.NotNil(t, streamRes)
+	require.Len(t, streamRes.Groups, 1)
+
+	grp := streamRes.Groups[0]
+	for _, c := range grp.Consumers {
+		if c.Name == consumers[3].ID() || c.Name == consumers[7].ID() {
+			require.Equal(t, c.PelCount, int64(0))
+		}
+
+		totalActual += c.PelCount
+	}*/
+
+	// see if any consumer has duplicate
+	streamsKey := make(map[string]string)
 
 	for i, c := range consumers {
 		// print for info
 		//log.Println("consumer ", c.ID(), " has ", c.StreamsOwned())
+
 		if i != 3 && i != 7 {
-			totalActual += len(c.StreamsOwned())
+			for _, s := range c.StreamsOwned() {
+				if _, ok := streamsKey[s]; !ok {
+					streamsKey[s] = c.ID()
+				} else {
+					log.Println("duplicate stream found: ", s, " existing owner ", streamsKey[s], " current owner ", c.ID())
+				}
+			}
+
+			totalActual += int64(len(c.StreamsOwned()))
 		}
 	}
 
@@ -462,6 +493,7 @@ func listenToKsp(t *testing.T, kspChan <-chan *redisgo.Message, consumers map[in
 	totalClaimed := 0
 
 	for {
+
 		if totalClaimed == expiredStreamCount {
 			break
 		}
@@ -472,12 +504,13 @@ func listenToKsp(t *testing.T, kspChan <-chan *redisgo.Message, consumers map[in
 			require.NotNil(t, notif)
 			require.NotNil(t, notif.Payload)
 			require.Contains(t, notif.Payload, "session")
-			consumerCurrent := len(consumers[i].StreamsOwned())
+			preClaimCount := len(consumers[i].StreamsOwned())
 			err := consumers[i].Claim(context.Background(), notif.Payload)
-			if err == nil {
-				log.Println("claimed ", notif.Payload, " by ", consumers[i].ID())
-				totalClaimed += len(consumers[i].StreamsOwned()) - consumerCurrent
+			if err != nil {
+				continue
 			}
+			postClaimCount := len(consumers[i].StreamsOwned())
+			totalClaimed += postClaimCount - preClaimCount
 		default:
 		}
 	}
