@@ -125,14 +125,15 @@ func (r *ReliableRedisStreamClient) processLBSMessages(ctx context.Context, stre
 	return nil
 }
 
-func (r *ReliableRedisStreamClient) startExtendingKey(ctx context.Context, mutex *redsync.Mutex) {
+func (r *ReliableRedisStreamClient) startExtendingKey(ctx context.Context, mutex *redsync.Mutex) error {
+	defer r.cleanup()
 	for {
 		if r.isContextDone(ctx) {
-			return
+			return nil
 		}
 
 		if err := r.lockAndExtend(mutex); err != nil {
-			return
+			return err
 		}
 
 		time.Sleep(r.hbInterval / 2)

@@ -228,9 +228,6 @@ func TestKspNotifs(t *testing.T) {
 
 func TestKspNotifsBulk(t *testing.T) {
 	totalStreams := 1000
-	totalConsumers := 10
-	doomedConsumer1 := 3
-	doomedConsumer2 := 7
 
 	redisContainer := setupSuite(t)
 
@@ -238,7 +235,7 @@ func TestKspNotifsBulk(t *testing.T) {
 	cancelFuncs := make(map[int]context.CancelFunc)
 	var kspChans []<-chan *redisgo.Message
 
-	for i := range totalConsumers {
+	for i := range 10 {
 		ctxWithCancel := context.TODO()
 		ctx, cancel := context.WithCancel(ctxWithCancel)
 
@@ -255,24 +252,13 @@ func TestKspNotifsBulk(t *testing.T) {
 	// add 1000 streams
 	addNStreamsToLBS(t, redisContainer, totalStreams)
 
-	time.Sleep(time.Second)
-
-	// print all stream ownership
-	preCancelTotal := 0
-	for _, c := range consumers {
-		fmt.Println(c.ID(), " has ", len(c.StreamsOwned()))
-		preCancelTotal += len(c.StreamsOwned())
-	}
-
-	fmt.Println("before cancelling: ", preCancelTotal)
-
 	// expected count of streams that will expire
-	expiredStreamsCount := len(consumers[doomedConsumer1].StreamsOwned()) + len(consumers[doomedConsumer2].StreamsOwned())
+	expiredStreamsCount := len(consumers[3].StreamsOwned()) + len(consumers[7].StreamsOwned())
 	log.Println("expired streams = ", expiredStreamsCount)
 
 	// start listening to kspChans and claim if we get a notification
 	for i, ch := range kspChans {
-		if i != 1 {
+		if i != 3 && i != 7 {
 			go listenToKsp(t, ch, consumers, i, expiredStreamsCount)
 		}
 	}
@@ -281,18 +267,18 @@ func TestKspNotifsBulk(t *testing.T) {
 	time.Sleep(time.Second)
 
 	// kill 2 consumers randomly
-	cancelFuncs[doomedConsumer1]()
-	cancelFuncs[doomedConsumer2]()
+	cancelFuncs[3]()
+	cancelFuncs[7]()
 
 	// give time for expiry to kick in
-	time.Sleep(5 * time.Second)
+	time.Sleep(3 * time.Second)
 
 	// check claims and distribution
 	// some streams are disconnected but all stream count for all consumers must still total 1000
 	totalExpected := int64(totalStreams)
 	totalActual := int64(0)
 
-	rc := newRedisClient(redisContainer)
+	/*rc := newRedisClient(redisContainer)
 	res := rc.XInfoStreamFull(context.Background(), "consumer-input", 2000)
 	require.NoError(t, res.Err())
 
@@ -301,45 +287,37 @@ func TestKspNotifsBulk(t *testing.T) {
 	require.Len(t, streamRes.Groups, 1)
 
 	grp := streamRes.Groups[0]
-	probPelCount := 0
 	for _, c := range grp.Consumers {
-		if (c.Name == consumers[3].ID() || c.Name == consumers[7].ID()) && c.PelCount > 0 {
-			probPelCount += int(c.PelCount)
+		if c.Name == consumers[3].ID() || c.Name == consumers[7].ID() {
+			require.Equal(t, c.PelCount, int64(0))
 		}
 
 		totalActual += c.PelCount
-	}
-
-	fmt.Println("problematic pel count ", probPelCount)
+	}*/
 
 	// see if any consumer has duplicate
-	/*streamsKey := make(map[string]string)
+	streamsKey := make(map[string]string)
 
 	for i, c := range consumers {
-		duplicates := 0
 		// print for info
 		//log.Println("consumer ", c.ID(), " has ", c.StreamsOwned())
 
-		if !slices.Contains([]int{doomedConsumer1, doomedConsumer2}, i) {
+		if i != 3 && i != 7 {
 			for _, s := range c.StreamsOwned() {
 				if _, ok := streamsKey[s]; !ok {
 					streamsKey[s] = c.ID()
 				} else {
-					duplicates++
-					//log.Println("duplicate stream found: ", s, " existing owner ", streamsKey[s], " current owner ", c.ID())
+					log.Println("duplicate stream found: ", s, " existing owner ", streamsKey[s], " current owner ", c.ID())
 				}
 			}
 
 			totalActual += int64(len(c.StreamsOwned()))
-			fmt.Println("total after adding ", totalActual, " from consumer ", c.ID())
 		}
 	}
 
-	fmt.Println("all unique streams : ", len(streamsKey))*/
-
 	// overall the streams should be same
 	// compare streams
-	require.Equal(t, totalExpected, totalActual-int64(probPelCount))
+	require.Equal(t, totalExpected, totalActual)
 }
 
 func TestMainFlow(t *testing.T) {
@@ -384,21 +362,66 @@ func TestMainFlow(t *testing.T) {
 	streamsPickedup := 0
 	consumer1Crashed := false
 	gotNotification := false
+	readingSuccess := false
 
 	i := 0
 
 	for {
 
+		if streamsPickedup == 2 {
+			readingSuccess = true
+			break
+		}
+
 		if i == 10 {
 			break
 		}
 
-		if streamsPickedup == 2 && !consumer1Crashed {
-			// kill consumer1
-			log.Println("killing consumer1")
-			require.Len(t, consumer1.StreamsOwned(), 1)
-			consumer1CancelFunc()
-			consumer1Crashed = true
+		select {
+		case msg, ok := <-lbsChan1:
+			if ok {
+				require.NotNil(t, msg)
+				var lbsMessage types.LBSMessage
+				require.NoError(t, json.Unmarshal([]byte(msg.Values[types.LBSInput].(string)), &lbsMessage))
+				require.NotNil(t, lbsMessage)
+				require.Contains(t, lbsMessage.DataStreamName, "session")
+				require.Contains(t, lbsMessage.Info["key0"], "value")
+				streamsPickedup++
+			}
+		case msg, ok := <-lbsChan2:
+			if ok {
+				require.NotNil(t, msg)
+				var lbsMessage types.LBSMessage
+				require.NoError(t, json.Unmarshal([]byte(msg.Values[types.LBSInput].(string)), &lbsMessage))
+				require.NotNil(t, lbsMessage)
+				require.Contains(t, lbsMessage.DataStreamName, "session")
+				require.Contains(t, lbsMessage.Info["key1"], "value")
+				streamsPickedup++
+			}
+		case <-time.After(time.Second):
+		}
+
+		i++
+	}
+
+	require.True(t, readingSuccess)
+
+	// kill consumer1
+	log.Println("killing consumer1")
+	require.Len(t, consumer1.StreamsOwned(), 1)
+	consumer1CancelFunc()
+	consumer1Crashed = true
+
+	claimSuccess := false
+	i = 0
+	streamsPickedup = 0
+
+	for {
+
+		log.Println("iteration ", i)
+
+		if i == 10 || claimSuccess {
+			break
 		}
 
 		select {
@@ -436,31 +459,21 @@ func TestMainFlow(t *testing.T) {
 			require.True(t, c1.ActiveTime.Before(c2.ActiveTime))
 			require.True(t, c1.SeenTime.Before(c2.SeenTime))
 
-		case msg, ok := <-lbsChan1:
-			if ok {
-				require.NotNil(t, msg)
-				var lbsMessage types.LBSMessage
-				require.NoError(t, json.Unmarshal([]byte(msg.Values[types.LBSInput].(string)), &lbsMessage))
-				require.NotNil(t, lbsMessage)
-				require.Contains(t, lbsMessage.DataStreamName, "session")
-				require.Contains(t, lbsMessage.Info["key0"], "value")
-				streamsPickedup++
-			}
-		case msg, ok := <-lbsChan2:
-			if ok {
-				require.NotNil(t, msg)
-				var lbsMessage types.LBSMessage
-				require.NoError(t, json.Unmarshal([]byte(msg.Values[types.LBSInput].(string)), &lbsMessage))
-				require.NotNil(t, lbsMessage)
-				require.Contains(t, lbsMessage.DataStreamName, "session")
-				require.Contains(t, lbsMessage.Info["key1"], "value")
-				streamsPickedup++
-			}
+			claimSuccess = true
+
 		case <-time.After(time.Second):
 		}
 
 		i++
 	}
+
+	// test if 10 seconds were not spent because we don't expect it to take 10 seconds to claim
+	// so its a failure
+	require.Less(t, i, 10)
+
+	// assert if consumer1 chan is closed properly
+	_, ok := <-lbsChan1
+	require.False(t, ok)
 
 	require.True(t, gotNotification)
 	consumer2.Done()
