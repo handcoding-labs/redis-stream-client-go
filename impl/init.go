@@ -118,15 +118,19 @@ func (r *ReliableRedisStreamClient) processLBSMessages(ctx context.Context, stre
 			//log.Println("wrote message ", message, " to LBS")
 
 			// now, keep extending the lock in a separate go routine
-			go r.startExtendingKey(ctx, mutex)
+			go r.startExtendingKey(ctx, mutex, lbsInfo.DataStreamName)
 		}
 	}
 
 	return nil
 }
 
-func (r *ReliableRedisStreamClient) startExtendingKey(ctx context.Context, mutex *redsync.Mutex) error {
-	defer r.cleanup()
+func (r *ReliableRedisStreamClient) startExtendingKey(ctx context.Context, mutex *redsync.Mutex, streamName string) error {
+	// inform that this stream is now disowned at the end
+	defer func() {
+		r.streamDisownedChan <- streamName
+	}()
+
 	for {
 		if r.isContextDone(ctx) {
 			return nil
