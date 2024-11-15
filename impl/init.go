@@ -123,11 +123,7 @@ func (r *ReliableRedisStreamClient) processLBSMessages(ctx context.Context, stre
 }
 
 func (r *ReliableRedisStreamClient) startExtendingKey(ctx context.Context, mutex *redsync.Mutex, streamName string) error {
-	// inform that this stream is now disowned at the end
-	defer func() {
-		r.streamDisownedChan <- streamName
-	}()
-
+	defer r.cleanup()
 	for {
 		if r.isContextDone(ctx) {
 			return nil

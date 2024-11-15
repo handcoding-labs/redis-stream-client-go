@@ -238,7 +238,7 @@ func TestKspNotifsBulk(t *testing.T) {
 	cancelFuncs := make(map[int]context.CancelFunc)
 	var kspChans []<-chan *redisgo.Message
 
-	for i := range totalConsumers {
+	for i := range 10 {
 		ctxWithCancel := context.TODO()
 		ctx, cancel := context.WithCancel(ctxWithCancel)
 
@@ -474,6 +474,10 @@ func TestMainFlow(t *testing.T) {
 	// test if 10 seconds were not spent because we don't expect it to take 10 seconds to claim
 	// so its a failure
 	require.Less(t, i, 10)
+
+	// assert if consumer1 chan is closed properly
+	_, ok := <-lbsChan1
+	require.False(t, ok)
 
 	require.True(t, gotNotification)
 	consumer2.Done()
