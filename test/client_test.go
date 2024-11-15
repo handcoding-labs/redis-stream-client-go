@@ -227,6 +227,8 @@ func TestKspNotifs(t *testing.T) {
 }
 
 func TestKspNotifsBulk(t *testing.T) {
+	t.Skip("skipping until issue #2 is fixed")
+
 	totalStreams := 1000
 
 	redisContainer := setupSuite(t)

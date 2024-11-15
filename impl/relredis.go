@@ -24,6 +24,8 @@ type ReliableRedisStreamClient struct {
 	kspChan <-chan *redis.Message
 	// lbsChan is the channel to read messages from the LBS stream
 	lbsChan chan *redis.XMessage
+	// lbsChanClosed tracks if lbsChan is closed or not
+	lbsChanClosed bool
 	// lbsCtxCancelFunc is used to control when to kill go routines spwaned as part of lbs
 	lbsCtxCancelFunc context.CancelFunc
 	// hbInterval is the interval at which the client sends heartbeats
@@ -194,7 +196,7 @@ func (r *ReliableRedisStreamClient) Done() {
 }
 
 func (r *ReliableRedisStreamClient) cleanup() {
-	close(r.lbsChan)
+	r.safeCloseLBS()
 
 	err := r.pubSub.Close()
 	if err != nil {
