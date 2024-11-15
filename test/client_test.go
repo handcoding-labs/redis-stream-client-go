@@ -238,7 +238,7 @@ func TestKspNotifsBulk(t *testing.T) {
 	cancelFuncs := make(map[int]context.CancelFunc)
 	var kspChans []<-chan *redisgo.Message
 
-	for i := range 10 {
+	for i := range totalConsumers {
 		ctxWithCancel := context.TODO()
 		ctx, cancel := context.WithCancel(ctxWithCancel)
 
