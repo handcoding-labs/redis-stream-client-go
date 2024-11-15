@@ -140,11 +140,6 @@ func (r *ReliableRedisStreamClient) Claim(ctx context.Context, mutexKey string) 
 			return r.consumerID, nil
 		}))
 
-	// lock the stream
-	if err := r.lockAndExtend(mutex); err != nil {
-		return err
-	}
-
 	go r.startExtendingKey(ctx, mutex)
 
 	// seed the mutex
