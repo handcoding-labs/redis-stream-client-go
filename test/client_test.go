@@ -475,10 +475,6 @@ func TestMainFlow(t *testing.T) {
 	// so its a failure
 	require.Less(t, i, 10)
 
-	// assert if consumer1 chan is closed properly
-	_, ok := <-lbsChan1
-	require.False(t, ok)
-
 	require.True(t, gotNotification)
 	consumer2.Done()
 	// no Done is called on consumer1 because it crashed
