@@ -261,7 +261,7 @@ func TestKspNotifsBulk(t *testing.T) {
 	// start listening to kspChans and claim if we get a notification
 	for i, ch := range kspChans {
 		if i != 3 && i != 7 {
-			go listenToKsp(t, ch, consumers, i, expiredStreamsCount)
+			go listenToKsp(t, ch, consumers, i)
 		}
 	}
 
@@ -272,15 +272,15 @@ func TestKspNotifsBulk(t *testing.T) {
 	cancelFuncs[3]()
 	cancelFuncs[7]()
 
-	// give time for expiry to kick in
-	time.Sleep(3 * time.Second)
+	// wait for expiry to kick in
+	time.Sleep(5 * time.Second)
 
 	// check claims and distribution
 	// some streams are disconnected but all stream count for all consumers must still total 1000
 	totalExpected := int64(totalStreams)
 	totalActual := int64(0)
 
-	/*rc := newRedisClient(redisContainer)
+	rc := newRedisClient(redisContainer)
 	res := rc.XInfoStreamFull(context.Background(), "consumer-input", 2000)
 	require.NoError(t, res.Err())
 
@@ -290,20 +290,19 @@ func TestKspNotifsBulk(t *testing.T) {
 
 	grp := streamRes.Groups[0]
 	for _, c := range grp.Consumers {
-		if c.Name == consumers[3].ID() || c.Name == consumers[7].ID() {
-			require.Equal(t, c.PelCount, int64(0))
+		if c.Name != consumers[3].ID() && c.Name != consumers[7].ID() {
+			totalActual += c.PelCount
 		}
+	}
 
-		totalActual += c.PelCount
-	}*/
+	require.Equal(t, totalExpected, totalActual)
+
+	totalActual = int64(0)
 
 	// see if any consumer has duplicate
 	streamsKey := make(map[string]string)
 
 	for i, c := range consumers {
-		// print for info
-		//log.Println("consumer ", c.ID(), " has ", c.StreamsOwned())
-
 		if i != 3 && i != 7 {
 			for _, s := range c.StreamsOwned() {
 				if _, ok := streamsKey[s]; !ok {
@@ -320,6 +319,13 @@ func TestKspNotifsBulk(t *testing.T) {
 	// overall the streams should be same
 	// compare streams
 	require.Equal(t, totalExpected, totalActual)
+
+	// close all consumers and release go routines
+	for i, c := range consumers {
+		if i != 3 && i != 7 {
+			c.Done()
+		}
+	}
 }
 
 func TestMainFlow(t *testing.T) {
@@ -525,32 +531,22 @@ func addNStreamsToLBS(t *testing.T, redisContainer *redis.RedisContainer, n int)
 func createConsumer(name string, redisContainer *redis.RedisContainer) types.RedisStreamClient {
 	_ = os.Setenv("POD_NAME", name)
 	// create a new redis client
-	return impl.NewRedisStreamClient(newRedisClient(redisContainer), 2*time.Second, "consumer")
+	return impl.NewRedisStreamClient(newRedisClient(redisContainer), "consumer")
 }
 
-func listenToKsp(t *testing.T, kspChan <-chan *redisgo.Message, consumers map[int]types.RedisStreamClient, i int, expiredStreamCount int) {
+func listenToKsp(t *testing.T, kspChan <-chan *redisgo.Message, consumers map[int]types.RedisStreamClient, i int) {
 	totalClaimed := 0
 
-	for {
-
-		if totalClaimed == expiredStreamCount {
-			break
+	for notif := range kspChan {
+		require.NotNil(t, notif)
+		require.NotNil(t, notif.Payload)
+		require.Contains(t, notif.Payload, "session")
+		preClaimCount := len(consumers[i].StreamsOwned())
+		err := consumers[i].Claim(context.Background(), notif.Payload)
+		if err != nil {
+			continue
 		}
-
-		select {
-		case notif, ok := <-kspChan:
-			require.True(t, ok)
-			require.NotNil(t, notif)
-			require.NotNil(t, notif.Payload)
-			require.Contains(t, notif.Payload, "session")
-			preClaimCount := len(consumers[i].StreamsOwned())
-			err := consumers[i].Claim(context.Background(), notif.Payload)
-			if err != nil {
-				continue
-			}
-			postClaimCount := len(consumers[i].StreamsOwned())
-			totalClaimed += postClaimCount - preClaimCount
-		default:
-		}
+		postClaimCount := len(consumers[i].StreamsOwned())
+		totalClaimed += postClaimCount - preClaimCount
 	}
 }

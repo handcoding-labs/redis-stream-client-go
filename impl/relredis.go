@@ -44,7 +44,7 @@ type ReliableRedisStreamClient struct {
 //
 // This function creates a new RedisStreamClient with the given redis client and stream name
 // Stream is the name of the stream to read from where actual data is transmitted
-func NewRedisStreamClient(redisClient redis.UniversalClient, hbInterval time.Duration, serviceName string) types.RedisStreamClient {
+func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string) types.RedisStreamClient {
 	// obtain consumer name via kubernetes downward api
 	podName := os.Getenv(types.PodName)
 	podIP := os.Getenv(types.PodIP)
@@ -61,10 +61,11 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, hbInterval time.Dur
 		consumerID = types.RedisConsumerPrefix + podIP
 	}
 
-	if hbInterval == 0 {
-		// default to 2 seconds
-		hbInterval = 2 * time.Second
-	}
+	// Based on experiements we use a default heartbeat of 2 seconds because when we get a distributed lock
+	// we extend key every heartbeatInterval / 2 times so that means we send heartbeat every second
+	// Simillarly, when claiming a stale stream, we wait for 1 heartbeat interval duration which means the key
+	// extension failed two consecutive times
+	defaultHBInterval := 2 * time.Second
 
 	return &ReliableRedisStreamClient{
 		redisClient:        redisClient,
@@ -73,7 +74,7 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, hbInterval time.Dur
 		lbsChanClosed:      false,
 		kspChan:            make(<-chan *redis.Message, 500),
 		lbsChan:            make(chan *redis.XMessage, 500),
-		hbInterval:         hbInterval,
+		hbInterval:         defaultHBInterval,
 		streamLocks:        make(map[string]*lbsInfo),
 		serviceName:        serviceName,
 	}
