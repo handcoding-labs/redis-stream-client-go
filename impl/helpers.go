@@ -49,8 +49,8 @@ func (r *ReliableRedisStreamClient) lockAndExtend(mutex *redsync.Mutex) error {
 }
 
 func (r *ReliableRedisStreamClient) safeCloseLBS() {
-	if !r.lbsChanClosed {
+	if !r.lbsChanClosed.Load() {
 		close(r.lbsChan)
-		r.lbsChanClosed = true
+		r.lbsChanClosed.CompareAndSwap(false, true)
 	}
 }

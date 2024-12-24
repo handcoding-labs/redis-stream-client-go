@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-redsync/redsync/v4"
@@ -26,7 +27,7 @@ type ReliableRedisStreamClient struct {
 	// lbsChan is the channel to read messages from the LBS stream
 	lbsChan chan *redis.XMessage
 	// lbsChanClosed tracks if lbsChan is closed or not
-	lbsChanClosed bool
+	lbsChanClosed atomic.Bool
 	// lbsCtxCancelFunc is used to control when to kill go routines spwaned as part of lbs
 	lbsCtxCancelFunc context.CancelFunc
 	// hbInterval is the interval at which the client sends heartbeats
@@ -70,7 +71,7 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string)
 		redisClient:        redisClient,
 		consumerID:         consumerID,
 		streamDisownedChan: make(chan string, 500),
-		lbsChanClosed:      false,
+		lbsChanClosed:      atomic.Bool{},
 		kspChan:            make(<-chan *redis.Message, 500),
 		lbsChan:            make(chan *redis.XMessage, 500),
 		hbInterval:         defaultHBInterval,
@@ -183,23 +184,25 @@ func (r *ReliableRedisStreamClient) DoneDataStream(ctx context.Context, dataStre
 }
 
 // Done marks the end of processing for a client
-func (r *ReliableRedisStreamClient) Done() {
+func (r *ReliableRedisStreamClient) Done() error {
 	ctx := context.Background()
 
 	for streamName := range r.streamLocks {
-		r.DoneDataStream(ctx, streamName)
+		if err := r.DoneDataStream(ctx, streamName); err != nil {
+			return err
+		}
 	}
 
 	// release resources
-	r.cleanup()
+	return r.cleanup()
 }
 
-func (r *ReliableRedisStreamClient) cleanup() {
+func (r *ReliableRedisStreamClient) cleanup() error {
 	r.safeCloseLBS()
-
-	r.pubSub.Close()
 
 	// drain kspchan
 	for range r.kspChan {
 	}
+
+	return r.pubSub.Close()
 }
