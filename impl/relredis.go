@@ -5,8 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-redsync/redsync/v4"
@@ -20,10 +20,14 @@ type ReliableRedisStreamClient struct {
 	redisClient redis.UniversalClient
 	// consumerID is the unique identifier for the consumer
 	consumerID string
+	// streamDisownedChan is the channel to read if a key owned by a consumer has to be disowned and stopped from consuming
+	streamDisownedChan chan string
 	// kspChan is the channel to read keyspace notifications
 	kspChan <-chan *redis.Message
 	// lbsChan is the channel to read messages from the LBS stream
 	lbsChan chan *redis.XMessage
+	// lbsChanClosed tracks if lbsChan is closed or not
+	lbsChanClosed atomic.Bool
 	// lbsCtxCancelFunc is used to control when to kill go routines spwaned as part of lbs
 	lbsCtxCancelFunc context.CancelFunc
 	// hbInterval is the interval at which the client sends heartbeats
@@ -40,7 +44,7 @@ type ReliableRedisStreamClient struct {
 //
 // This function creates a new RedisStreamClient with the given redis client and stream name
 // Stream is the name of the stream to read from where actual data is transmitted
-func NewRedisStreamClient(redisClient redis.UniversalClient, hbInterval time.Duration, serviceName string) types.RedisStreamClient {
+func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string) types.RedisStreamClient {
 	// obtain consumer name via kubernetes downward api
 	podName := os.Getenv(types.PodName)
 	podIP := os.Getenv(types.PodIP)
@@ -57,19 +61,22 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, hbInterval time.Dur
 		consumerID = types.RedisConsumerPrefix + podIP
 	}
 
-	if hbInterval == 0 {
-		// default to 1 second
-		hbInterval = time.Second
-	}
+	// Based on experiements we use a default heartbeat of 2 seconds because when we get a distributed lock
+	// we extend key every heartbeatInterval / 2 times so that means we send heartbeat every second
+	// Simillarly, when claiming a stale stream, we wait for 1 heartbeat interval duration which means the key
+	// extension failed two consecutive times
+	defaultHBInterval := 2 * time.Second
 
 	return &ReliableRedisStreamClient{
-		redisClient: redisClient,
-		consumerID:  consumerID,
-		kspChan:     make(<-chan *redis.Message, 500),
-		lbsChan:     make(chan *redis.XMessage, 500),
-		hbInterval:  hbInterval,
-		streamLocks: make(map[string]*lbsInfo),
-		serviceName: serviceName,
+		redisClient:        redisClient,
+		consumerID:         consumerID,
+		streamDisownedChan: make(chan string, 500),
+		lbsChanClosed:      atomic.Bool{},
+		kspChan:            make(<-chan *redis.Message, 500),
+		lbsChan:            make(chan *redis.XMessage, 500),
+		hbInterval:         defaultHBInterval,
+		streamLocks:        make(map[string]*lbsInfo),
+		serviceName:        serviceName,
 	}
 }
 
@@ -84,10 +91,10 @@ func (r *ReliableRedisStreamClient) ID() string {
 // subscribing to expired events, and starting a blocking read on the LBS stream
 // Returns a channel to read messages from the LBS stream. The client should read from this channel and process the messages.
 // Returns a channel to read keyspace notifications. The client should read from this channel and process the notifications.
-func (r *ReliableRedisStreamClient) Init(ctx context.Context) (<-chan *redis.XMessage, <-chan *redis.Message, error) {
+func (r *ReliableRedisStreamClient) Init(ctx context.Context) (<-chan *redis.XMessage, <-chan *redis.Message, <-chan string, error) {
 	if r.checkErr(ctx, r.enableKeyspaceNotifsForExpiredEvents).
 		checkErr(ctx, r.subscribeToExpiredEvents) == nil {
-		return nil, nil, fmt.Errorf("error initializing the client")
+		return nil, nil, nil, fmt.Errorf("error initializing the client")
 	}
 
 	lbsCtx, cancelFunc := context.WithCancel(ctx)
@@ -96,7 +103,7 @@ func (r *ReliableRedisStreamClient) Init(ctx context.Context) (<-chan *redis.XMe
 	// start blocking read on LBS stream
 	go r.readLBSStream(lbsCtx)
 
-	return r.lbsChan, r.kspChan, nil
+	return r.lbsChan, r.kspChan, r.streamDisownedChan, nil
 }
 
 // Claim claims pending messages from a stream
@@ -140,7 +147,7 @@ func (r *ReliableRedisStreamClient) Claim(ctx context.Context, mutexKey string) 
 			return r.consumerID, nil
 		}))
 
-	go r.startExtendingKey(ctx, mutex)
+	go r.startExtendingKey(ctx, mutex, lbsInfo.DataStreamName)
 
 	// seed the mutex
 	lbsInfo.Mutex = mutex
@@ -162,8 +169,7 @@ func (r *ReliableRedisStreamClient) DoneDataStream(ctx context.Context, dataStre
 	}
 
 	// unlock the stream
-	ok, err := lbsInfo.Mutex.Unlock()
-	log.Println("Unlocking stream", dataStreamName, "done: ", ok, "err: ", err)
+	_, err := lbsInfo.Mutex.Unlock()
 	if err != nil && !errors.Is(errors.Unwrap(err), redsync.ErrLockAlreadyExpired) {
 		return err
 	}
@@ -174,33 +180,34 @@ func (r *ReliableRedisStreamClient) DoneDataStream(ctx context.Context, dataStre
 		return res.Err()
 	}
 
-	r.lbsCtxCancelFunc()
-
 	return nil
 }
 
 // Done marks the end of processing for a client
-func (r *ReliableRedisStreamClient) Done() {
+func (r *ReliableRedisStreamClient) Done() error {
 	ctx := context.Background()
 
 	for streamName := range r.streamLocks {
 		if err := r.DoneDataStream(ctx, streamName); err != nil {
-			log.Println("error", err, " occured while marking stream", streamName, " as done; moving on to other streams ...")
+			return err
 		}
 	}
 
 	// release resources
-	r.cleanup()
+	return r.cleanup()
 }
 
-func (r *ReliableRedisStreamClient) cleanup() {
-	close(r.lbsChan)
+func (r *ReliableRedisStreamClient) cleanup() error {
+	r.safeCloseLBS()
 
-	err := r.pubSub.Close()
-	if err != nil {
-		log.Println("error in closing redis pub/sub")
+	if err := r.pubSub.Close(); err != nil {
+		return err
 	}
+
 	// drain kspchan
-	for range r.kspChan {
+	for len(r.kspChan) > 0 {
+		<-r.kspChan
 	}
+
+	return nil
 }
