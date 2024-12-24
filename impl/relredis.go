@@ -200,9 +200,14 @@ func (r *ReliableRedisStreamClient) Done() error {
 func (r *ReliableRedisStreamClient) cleanup() error {
 	r.safeCloseLBS()
 
-	// drain kspchan
-	for range r.kspChan {
+	if err := r.pubSub.Close(); err != nil {
+		return err
 	}
 
-	return r.pubSub.Close()
+	// drain kspchan
+	for len(r.kspChan) > 0 {
+		<-r.kspChan
+	}
+
+	return nil
 }
