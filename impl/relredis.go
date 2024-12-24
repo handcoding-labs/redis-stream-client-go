@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"time"
 
@@ -169,8 +168,7 @@ func (r *ReliableRedisStreamClient) DoneDataStream(ctx context.Context, dataStre
 	}
 
 	// unlock the stream
-	ok, err := lbsInfo.Mutex.Unlock()
-	log.Println("Unlocking stream", dataStreamName, "done: ", ok, "err: ", err)
+	_, err := lbsInfo.Mutex.Unlock()
 	if err != nil && !errors.Is(errors.Unwrap(err), redsync.ErrLockAlreadyExpired) {
 		return err
 	}
@@ -189,9 +187,7 @@ func (r *ReliableRedisStreamClient) Done() {
 	ctx := context.Background()
 
 	for streamName := range r.streamLocks {
-		if err := r.DoneDataStream(ctx, streamName); err != nil {
-			log.Println("error", err, " occured while marking stream", streamName, " as done; moving on to other streams ...")
-		}
+		r.DoneDataStream(ctx, streamName)
 	}
 
 	// release resources
@@ -201,10 +197,8 @@ func (r *ReliableRedisStreamClient) Done() {
 func (r *ReliableRedisStreamClient) cleanup() {
 	r.safeCloseLBS()
 
-	err := r.pubSub.Close()
-	if err != nil {
-		log.Println("error in closing redis pub/sub")
-	}
+	r.pubSub.Close()
+
 	// drain kspchan
 	for range r.kspChan {
 	}
