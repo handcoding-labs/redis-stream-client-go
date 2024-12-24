@@ -27,14 +27,6 @@ func (r *ReliableRedisStreamClient) checkErr(ctx context.Context, fn func(contex
 	return r
 }
 
-func (r *ReliableRedisStreamClient) StreamsOwned() (streamsOwned []string) {
-	for _, s := range r.streamLocks {
-		streamsOwned = append(streamsOwned, s.DataStreamName)
-	}
-
-	return
-}
-
 func (r *ReliableRedisStreamClient) isContextDone(ctx context.Context) bool {
 	select {
 	case <-ctx.Done():
@@ -57,8 +49,7 @@ func (r *ReliableRedisStreamClient) lockAndExtend(mutex *redsync.Mutex) error {
 }
 
 func (r *ReliableRedisStreamClient) safeCloseLBS() {
-	if !r.lbsChanClosed {
+	if r.lbsChanClosed.CompareAndSwap(false, true) {
 		close(r.lbsChan)
-		r.lbsChanClosed = true
 	}
 }

@@ -60,7 +60,7 @@ err := client.Claim(ctx, <ksp notification payload>)
 
 An error in `Claim` indicates the client was not successful in claiming the stream as some other client got there before.
 
-After all the processing is done, call `DoneDataStream` on client to mark end for a particular data stream that the consumer owns (full list can be obtained by `StreamsOwned()`)
+After all the processing is done, call `DoneDataStream` on client to mark end for a particular data stream that the consumer owns.
 
 ```
 client.DoneDataStream(ctx, <data stream name>)

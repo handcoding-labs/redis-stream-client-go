@@ -21,12 +21,10 @@ type RedisStreamClient interface {
 	//
 	// should be called once a consumer receives a message on kspchan
 	Claim(ctx context.Context, kspNotification string) error
-	// StreamsOwned provides a list of string of the data stream names that are being processed by consumer.
-	StreamsOwned() (streamsOwned []string)
 	// DoneDataStream allows to mark end of processing and ownership for a particular data stream
 	DoneDataStream(ctx context.Context, dataStreamName string) error
 	// Done marks the end of processing the stream
 	//
 	// should be called when consumer is done processing the data stream.
-	Done()
+	Done() error
 }

@@ -32,7 +32,6 @@ func (r *ReliableRedisStreamClient) subscribeToExpiredEvents(ctx context.Context
 }
 
 func (r *ReliableRedisStreamClient) readLBSStream(ctx context.Context) {
-
 	pool := goredis.NewPool(r.redisClient)
 	rs := redsync.New(pool)
 
@@ -111,11 +110,9 @@ func (r *ReliableRedisStreamClient) processLBSMessages(ctx context.Context, stre
 			// now seed the mutex
 			lbsInfo.Mutex = mutex
 
-			r.streamLocks[lbsMessage.DataStreamName] = lbsInfo
+			r.streamLocks[message.ID] = lbsInfo
 
 			r.lbsChan <- &message
-
-			//log.Println("wrote message ", message, " to LBS")
 
 			// now, keep extending the lock in a separate go routine
 			go r.startExtendingKey(ctx, mutex, lbsInfo.DataStreamName)

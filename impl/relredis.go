@@ -5,8 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-redsync/redsync/v4"
@@ -27,7 +27,7 @@ type ReliableRedisStreamClient struct {
 	// lbsChan is the channel to read messages from the LBS stream
 	lbsChan chan *redis.XMessage
 	// lbsChanClosed tracks if lbsChan is closed or not
-	lbsChanClosed bool
+	lbsChanClosed atomic.Bool
 	// lbsCtxCancelFunc is used to control when to kill go routines spwaned as part of lbs
 	lbsCtxCancelFunc context.CancelFunc
 	// hbInterval is the interval at which the client sends heartbeats
@@ -44,7 +44,7 @@ type ReliableRedisStreamClient struct {
 //
 // This function creates a new RedisStreamClient with the given redis client and stream name
 // Stream is the name of the stream to read from where actual data is transmitted
-func NewRedisStreamClient(redisClient redis.UniversalClient, hbInterval time.Duration, serviceName string) types.RedisStreamClient {
+func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string) types.RedisStreamClient {
 	// obtain consumer name via kubernetes downward api
 	podName := os.Getenv(types.PodName)
 	podIP := os.Getenv(types.PodIP)
@@ -61,19 +61,20 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, hbInterval time.Dur
 		consumerID = types.RedisConsumerPrefix + podIP
 	}
 
-	if hbInterval == 0 {
-		// default to 2 seconds
-		hbInterval = 2 * time.Second
-	}
+	// Based on experiements we use a default heartbeat of 2 seconds because when we get a distributed lock
+	// we extend key every heartbeatInterval / 2 times so that means we send heartbeat every second
+	// Simillarly, when claiming a stale stream, we wait for 1 heartbeat interval duration which means the key
+	// extension failed two consecutive times
+	defaultHBInterval := 2 * time.Second
 
 	return &ReliableRedisStreamClient{
 		redisClient:        redisClient,
 		consumerID:         consumerID,
 		streamDisownedChan: make(chan string, 500),
-		lbsChanClosed:      false,
+		lbsChanClosed:      atomic.Bool{},
 		kspChan:            make(<-chan *redis.Message, 500),
 		lbsChan:            make(chan *redis.XMessage, 500),
-		hbInterval:         hbInterval,
+		hbInterval:         defaultHBInterval,
 		streamLocks:        make(map[string]*lbsInfo),
 		serviceName:        serviceName,
 	}
@@ -168,8 +169,7 @@ func (r *ReliableRedisStreamClient) DoneDataStream(ctx context.Context, dataStre
 	}
 
 	// unlock the stream
-	ok, err := lbsInfo.Mutex.Unlock()
-	log.Println("Unlocking stream", dataStreamName, "done: ", ok, "err: ", err)
+	_, err := lbsInfo.Mutex.Unlock()
 	if err != nil && !errors.Is(errors.Unwrap(err), redsync.ErrLockAlreadyExpired) {
 		return err
 	}
@@ -184,27 +184,30 @@ func (r *ReliableRedisStreamClient) DoneDataStream(ctx context.Context, dataStre
 }
 
 // Done marks the end of processing for a client
-func (r *ReliableRedisStreamClient) Done() {
+func (r *ReliableRedisStreamClient) Done() error {
 	ctx := context.Background()
 
 	for streamName := range r.streamLocks {
 		if err := r.DoneDataStream(ctx, streamName); err != nil {
-			log.Println("error", err, " occured while marking stream", streamName, " as done; moving on to other streams ...")
+			return err
 		}
 	}
 
 	// release resources
-	r.cleanup()
+	return r.cleanup()
 }
 
-func (r *ReliableRedisStreamClient) cleanup() {
+func (r *ReliableRedisStreamClient) cleanup() error {
 	r.safeCloseLBS()
 
-	err := r.pubSub.Close()
-	if err != nil {
-		log.Println("error in closing redis pub/sub")
+	if err := r.pubSub.Close(); err != nil {
+		return err
 	}
+
 	// drain kspchan
-	for range r.kspChan {
+	for len(r.kspChan) > 0 {
+		<-r.kspChan
 	}
+
+	return nil
 }
