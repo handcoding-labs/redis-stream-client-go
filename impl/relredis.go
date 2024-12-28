@@ -1,12 +1,12 @@
 package impl
 
 import (
+	"bburli/redis-stream-client-go/notifs"
 	"bburli/redis-stream-client-go/types"
 	"context"
 	"errors"
 	"fmt"
 	"os"
-	"sync/atomic"
 	"time"
 
 	"github.com/go-redsync/redsync/v4"
@@ -20,14 +20,8 @@ type ReliableRedisStreamClient struct {
 	redisClient redis.UniversalClient
 	// consumerID is the unique identifier for the consumer
 	consumerID string
-	// streamDisownedChan is the channel to read if a key owned by a consumer has to be disowned and stopped from consuming
-	streamDisownedChan chan string
 	// kspChan is the channel to read keyspace notifications
 	kspChan <-chan *redis.Message
-	// lbsChan is the channel to read messages from the LBS stream
-	lbsChan chan *redis.XMessage
-	// lbsChanClosed tracks if lbsChan is closed or not
-	lbsChanClosed atomic.Bool
 	// lbsCtxCancelFunc is used to control when to kill go routines spwaned as part of lbs
 	lbsCtxCancelFunc context.CancelFunc
 	// hbInterval is the interval at which the client sends heartbeats
@@ -38,6 +32,8 @@ type ReliableRedisStreamClient struct {
 	serviceName string
 	// redis pub sub subscription
 	pubSub *redis.PubSub
+	// outputChan is the channel exposed to clients on which we relay all messages
+	outputChan chan notifs.RelRedisNotification[any]
 }
 
 // NewRedisStreamClient creates a new RedisStreamClient
@@ -68,15 +64,13 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string)
 	defaultHBInterval := 2 * time.Second
 
 	return &ReliableRedisStreamClient{
-		redisClient:        redisClient,
-		consumerID:         consumerID,
-		streamDisownedChan: make(chan string, 500),
-		lbsChanClosed:      atomic.Bool{},
-		kspChan:            make(<-chan *redis.Message, 500),
-		lbsChan:            make(chan *redis.XMessage, 500),
-		hbInterval:         defaultHBInterval,
-		streamLocks:        make(map[string]*lbsInfo),
-		serviceName:        serviceName,
+		redisClient: redisClient,
+		consumerID:  consumerID,
+		kspChan:     make(<-chan *redis.Message, 500),
+		hbInterval:  defaultHBInterval,
+		streamLocks: make(map[string]*lbsInfo),
+		serviceName: serviceName,
+		outputChan:  make(chan notifs.RelRedisNotification[any], 500),
 	}
 }
 
@@ -91,10 +85,10 @@ func (r *ReliableRedisStreamClient) ID() string {
 // subscribing to expired events, and starting a blocking read on the LBS stream
 // Returns a channel to read messages from the LBS stream. The client should read from this channel and process the messages.
 // Returns a channel to read keyspace notifications. The client should read from this channel and process the notifications.
-func (r *ReliableRedisStreamClient) Init(ctx context.Context) (<-chan *redis.XMessage, <-chan *redis.Message, <-chan string, error) {
+func (r *ReliableRedisStreamClient) Init(ctx context.Context) (<-chan notifs.RelRedisNotification[any], error) {
 	if r.checkErr(ctx, r.enableKeyspaceNotifsForExpiredEvents).
 		checkErr(ctx, r.subscribeToExpiredEvents) == nil {
-		return nil, nil, nil, fmt.Errorf("error initializing the client")
+		return nil, fmt.Errorf("error initializing the client")
 	}
 
 	lbsCtx, cancelFunc := context.WithCancel(ctx)
@@ -103,7 +97,10 @@ func (r *ReliableRedisStreamClient) Init(ctx context.Context) (<-chan *redis.XMe
 	// start blocking read on LBS stream
 	go r.readLBSStream(lbsCtx)
 
-	return r.lbsChan, r.kspChan, r.streamDisownedChan, nil
+	// listen to ksp chan
+	go r.listenKsp()
+
+	return r.outputChan, nil
 }
 
 // Claim claims pending messages from a stream
@@ -194,20 +191,36 @@ func (r *ReliableRedisStreamClient) Done() error {
 	}
 
 	// release resources
-	return r.cleanup()
+	if err := r.cleanup(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (r *ReliableRedisStreamClient) cleanup() error {
-	r.safeCloseLBS()
-
 	if err := r.pubSub.Close(); err != nil {
 		return err
 	}
 
 	// drain kspchan
 	for len(r.kspChan) > 0 {
-		<-r.kspChan
+		kspNotif, ok := <-r.kspChan
+		if ok {
+			r.outputChan <- notifs.RelRedisNotification[any]{
+				Type:         notifs.StreamExpired,
+				Notification: kspNotif.Payload,
+			}
+		}
 	}
+
+	r.outputChan <- notifs.RelRedisNotification[any]{
+		Type:         notifs.General,
+		Notification: notifs.KspChanClosed,
+	}
+
+	// cancel LBS context
+	r.lbsCtxCancelFunc()
 
 	return nil
 }

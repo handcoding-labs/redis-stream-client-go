@@ -1,6 +1,7 @@
 package impl
 
 import (
+	"bburli/redis-stream-client-go/notifs"
 	"bburli/redis-stream-client-go/types"
 	"context"
 	"encoding/json"
@@ -79,7 +80,7 @@ func (r *ReliableRedisStreamClient) processLBSMessages(ctx context.Context, stre
 			}
 
 			// unmarshal the message
-			var lbsMessage types.LBSMessage
+			var lbsMessage notifs.LBSMessage
 			if err := json.Unmarshal([]byte(v.(string)), &lbsMessage); err != nil {
 				return fmt.Errorf("error while unmarshalling LBS message")
 			}
@@ -112,7 +113,10 @@ func (r *ReliableRedisStreamClient) processLBSMessages(ctx context.Context, stre
 
 			r.streamLocks[message.ID] = lbsInfo
 
-			r.lbsChan <- &message
+			r.outputChan <- notifs.RelRedisNotification[any]{
+				Type:         notifs.StreamAdded,
+				Notification: v,
+			}
 
 			// now, keep extending the lock in a separate go routine
 			go r.startExtendingKey(ctx, mutex, lbsInfo.DataStreamName)
@@ -124,7 +128,11 @@ func (r *ReliableRedisStreamClient) processLBSMessages(ctx context.Context, stre
 
 func (r *ReliableRedisStreamClient) startExtendingKey(ctx context.Context, mutex *redsync.Mutex, streamName string) error {
 	defer func() {
-		r.streamDisownedChan <- streamName
+		r.outputChan <- notifs.RelRedisNotification[any]{
+			Type:         notifs.StreamDisowned,
+			Notification: streamName,
+		}
+
 		r.cleanup()
 	}()
 
@@ -138,5 +146,14 @@ func (r *ReliableRedisStreamClient) startExtendingKey(ctx context.Context, mutex
 		}
 
 		time.Sleep(r.hbInterval / 2)
+	}
+}
+
+func (r *ReliableRedisStreamClient) listenKsp() {
+	for kspNotif := range r.kspChan {
+		r.outputChan <- notifs.RelRedisNotification[any]{
+			Type:         notifs.StreamExpired,
+			Notification: kspNotif.Payload,
+		}
 	}
 }
