@@ -9,20 +9,20 @@ const (
 	General
 )
 
-type RelRedisNotification[T any] struct {
+type RecoverableRedisNotification[T any] struct {
 	Type         NotificationType
 	Notification T
 }
-
-type GenericNotification string
-
-const (
-	LBSChanClosed GenericNotification = "lbs_chan_closed"
-	KspChanClosed GenericNotification = "ksp_chan_closed"
-)
 
 // LBSMessage is the format in which the message should be written to LBS
 type LBSMessage struct {
 	DataStreamName string
 	Info           map[string]interface{}
+}
+
+func Make(value any, notifType NotificationType) RecoverableRedisNotification[any] {
+	return RecoverableRedisNotification[any]{
+		Type:         notifType,
+		Notification: value,
+	}
 }

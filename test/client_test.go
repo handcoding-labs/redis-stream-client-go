@@ -126,19 +126,11 @@ func TestLBS(t *testing.T) {
 	consumer1.Done()
 	consumer2.Done()
 
-	notif, ok := <-opChan1
-	require.True(t, ok)
-	require.Equal(t, notif, notifs.RelRedisNotification[any]{
-		Type:         notifs.General,
-		Notification: notifs.KspChanClosed,
-	})
+	_, ok := <-opChan1
+	require.False(t, ok)
 
-	notif, ok = <-opChan2
-	require.True(t, ok)
-	require.Equal(t, notif, notifs.RelRedisNotification[any]{
-		Type:         notifs.General,
-		Notification: notifs.KspChanClosed,
-	})
+	_, ok = <-opChan2
+	require.False(t, ok)
 }
 
 func TestClaimWorksOnlyOnce(t *testing.T) {
@@ -184,7 +176,6 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	require.Equal(t, err, fmt.Errorf("already claimed"))
 
 	// Done is not called on consumer1 as it's crashed
-
 	consumer2.Done()
 	consumer3.Done()
 }
@@ -241,7 +232,7 @@ func TestKspNotifsBulk(t *testing.T) {
 
 	consumers := make(map[int]types.RedisStreamClient)
 	cancelFuncs := make(map[int]context.CancelFunc)
-	var outputChans []<-chan notifs.RelRedisNotification[any]
+	var outputChans []<-chan notifs.RecoverableRedisNotification[any]
 
 	for i := range totalConsumers {
 		ctxWithCancel := context.TODO()
@@ -428,6 +419,7 @@ func TestMainFlow(t *testing.T) {
 		case notifs.StreamDisowned:
 			require.Equal(t, msg.Notification, "session0")
 			streamDisowned = true
+		default:
 		}
 
 		if streamDisowned {
@@ -435,6 +427,7 @@ func TestMainFlow(t *testing.T) {
 		}
 	}
 
+	require.True(t, streamDisowned)
 	claimSuccess := false
 	i = 0
 	streamsPickedup = 0
@@ -506,13 +499,9 @@ func TestMainFlow(t *testing.T) {
 	// calling here to shut up the ctx leak error message
 	consumer1CancelFunc()
 
-	// kspchan may contain values as consumer1 crashes
-	v, ok := <-opChan2
-	require.True(t, ok)
-	require.Equal(t, v, notifs.RelRedisNotification[any]{
-		Type:         notifs.General,
-		Notification: notifs.KspChanClosed,
-	})
+	// check if outputChan is closed
+	_, ok := <-opChan2
+	require.False(t, ok)
 }
 
 func addNStreamsToLBS(redisContainer *redis.RedisContainer, n int) {
@@ -546,7 +535,7 @@ func createConsumer(name string, redisContainer *redis.RedisContainer) types.Red
 	return impl.NewRedisStreamClient(newRedisClient(redisContainer), "consumer")
 }
 
-func listenToKsp(t *testing.T, outputChan <-chan notifs.RelRedisNotification[any], consumers map[int]types.RedisStreamClient, i int) {
+func listenToKsp(t *testing.T, outputChan <-chan notifs.RecoverableRedisNotification[any], consumers map[int]types.RedisStreamClient, i int) {
 	for notif := range outputChan {
 		switch notif.Type {
 		case notifs.StreamExpired:

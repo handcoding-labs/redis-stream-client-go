@@ -15,7 +15,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func (r *ReliableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx context.Context) error {
+func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx context.Context) error {
 	// subscribe to key space events for expiration only
 	// https://redis.io/docs/latest/develop/use/keyspace-notifications/
 	res := r.redisClient.ConfigSet(ctx, types.NotifyKeyspaceEventsCmd, types.KeyspacePatternForExpiredEvents)
@@ -26,13 +26,13 @@ func (r *ReliableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx con
 	return nil
 }
 
-func (r *ReliableRedisStreamClient) subscribeToExpiredEvents(ctx context.Context) error {
+func (r *RecoverableRedisStreamClient) subscribeToExpiredEvents(ctx context.Context) error {
 	r.pubSub = r.redisClient.PSubscribe(ctx, types.ExpiredEventPattern)
 	r.kspChan = r.pubSub.Channel(redis.WithChannelHealthCheckInterval(1*time.Second), redis.WithChannelSendTimeout(10*time.Minute))
 	return nil
 }
 
-func (r *ReliableRedisStreamClient) readLBSStream(ctx context.Context) {
+func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
 	pool := goredis.NewPool(r.redisClient)
 	rs := redsync.New(pool)
 
@@ -70,7 +70,7 @@ func (r *ReliableRedisStreamClient) readLBSStream(ctx context.Context) {
 	}
 }
 
-func (r *ReliableRedisStreamClient) processLBSMessages(ctx context.Context, streams []redis.XStream, rs *redsync.Redsync) error {
+func (r *RecoverableRedisStreamClient) processLBSMessages(ctx context.Context, streams []redis.XStream, rs *redsync.Redsync) error {
 	for _, stream := range streams {
 		for _, message := range stream.Messages {
 			// has to be an LBS message
@@ -94,7 +94,7 @@ func (r *ReliableRedisStreamClient) processLBSMessages(ctx context.Context, stre
 				return err
 			}
 
-			// acquire lock
+			// create mutex
 			mutex := rs.NewMutex(lbsInfo.getMutexKey(),
 				redsync.WithExpiry(r.hbInterval),
 				redsync.WithFailFast(true),
@@ -104,7 +104,8 @@ func (r *ReliableRedisStreamClient) processLBSMessages(ctx context.Context, stre
 					return r.consumerID, nil
 				}))
 
-			if err := r.lockAndExtend(mutex); err != nil {
+			// lock only once
+			if err := mutex.Lock(); err != nil {
 				return err
 			}
 
@@ -112,11 +113,7 @@ func (r *ReliableRedisStreamClient) processLBSMessages(ctx context.Context, stre
 			lbsInfo.Mutex = mutex
 
 			r.streamLocks[message.ID] = lbsInfo
-
-			r.outputChan <- notifs.RelRedisNotification[any]{
-				Type:         notifs.StreamAdded,
-				Notification: v,
-			}
+			r.outputChan <- notifs.Make(v, notifs.StreamAdded)
 
 			// now, keep extending the lock in a separate go routine
 			go r.startExtendingKey(ctx, mutex, lbsInfo.DataStreamName)
@@ -126,14 +123,12 @@ func (r *ReliableRedisStreamClient) processLBSMessages(ctx context.Context, stre
 	return nil
 }
 
-func (r *ReliableRedisStreamClient) startExtendingKey(ctx context.Context, mutex *redsync.Mutex, streamName string) error {
+func (r *RecoverableRedisStreamClient) startExtendingKey(ctx context.Context, mutex *redsync.Mutex, streamName string) error {
 	defer func() {
-		r.outputChan <- notifs.RelRedisNotification[any]{
-			Type:         notifs.StreamDisowned,
-			Notification: streamName,
+		if !r.outputChanClosed.Load() {
+			// if client is still intersted or is coming back from a delay (GC pause etc) then inform about disowning of stream
+			r.outputChan <- notifs.Make(streamName, notifs.StreamDisowned)
 		}
-
-		r.cleanup()
 	}()
 
 	for {
@@ -141,19 +136,16 @@ func (r *ReliableRedisStreamClient) startExtendingKey(ctx context.Context, mutex
 			return nil
 		}
 
-		if err := r.lockAndExtend(mutex); err != nil {
-			return err
+		if ok, err := mutex.Extend(); !ok || err != nil {
+			return fmt.Errorf("could not extend mutex, err: %s", err)
 		}
 
 		time.Sleep(r.hbInterval / 2)
 	}
 }
 
-func (r *ReliableRedisStreamClient) listenKsp() {
+func (r *RecoverableRedisStreamClient) listenKsp() {
 	for kspNotif := range r.kspChan {
-		r.outputChan <- notifs.RelRedisNotification[any]{
-			Type:         notifs.StreamExpired,
-			Notification: kspNotif.Payload,
-		}
+		r.outputChan <- notifs.Make(kspNotif.Payload, notifs.StreamExpired)
 	}
 }
