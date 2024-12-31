@@ -222,8 +222,9 @@ func (r *RecoverableRedisStreamClient) cleanup() error {
 	r.lbsCtxCancelFunc()
 
 	// close the ouptut channe
-	close(r.outputChan)
-	r.outputChanClosed.CompareAndSwap(false, true)
+	if r.outputChanClosed.CompareAndSwap(false, true) {
+		close(r.outputChan)
+	}
 
 	return nil
 }

@@ -1,14 +1,16 @@
 package notifs
 
+// Types of notifications sent to client.
 type NotificationType int
 
 const (
 	StreamAdded NotificationType = iota
 	StreamDisowned
 	StreamExpired
-	General
 )
 
+// RecoverableRedisNotification captures the type of notifications sent to client.
+// These are captured by NotificationType enum.
 type RecoverableRedisNotification[T any] struct {
 	Type         NotificationType
 	Notification T
