@@ -224,7 +224,7 @@ func TestKspNotifsBulk(t *testing.T) {
 	// this is kept 3000 because go test suite times out at 30s and this is the number of streams that we can process
 	// to test higher numbers run locally by increasing timeout : go test -timeout=600s ...
 	totalStreams := 3000
-	totalConsumers := totalStreams / 100 // having low number of consumers will create lag
+	totalConsumers := totalStreams / 200 // having low number of consumers will create lag
 
 	redisContainer := setupSuite(t)
 	// client for testing and assertion purposes
