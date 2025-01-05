@@ -85,7 +85,7 @@ func TestLBS(t *testing.T) {
 				require.True(t, ok)
 				require.NotNil(t, msg)
 				var lbsMessage notifs.LBSMessage
-				require.NoError(t, json.Unmarshal([]byte(msg.Notification.(string)), &lbsMessage))
+				require.NoError(t, json.Unmarshal([]byte(msg.Payload.(string)), &lbsMessage))
 				require.NotNil(t, lbsMessage)
 
 				if expectedMsgConsumer1 != "" {
@@ -106,7 +106,7 @@ func TestLBS(t *testing.T) {
 				require.True(t, ok)
 				require.NotNil(t, msg)
 				var lbsMessage notifs.LBSMessage
-				require.NoError(t, json.Unmarshal([]byte(msg.Notification.(string)), &lbsMessage))
+				require.NoError(t, json.Unmarshal([]byte(msg.Payload.(string)), &lbsMessage))
 				require.NotNil(t, lbsMessage)
 				if expectedMsgConsumer2 != "" {
 					require.Equal(t, lbsMessage.DataStreamName, expectedMsgConsumer2)
@@ -378,7 +378,7 @@ func TestMainFlow(t *testing.T) {
 					require.True(t, ok)
 					require.NotNil(t, msg)
 					var lbsMessage notifs.LBSMessage
-					require.NoError(t, json.Unmarshal([]byte(msg.Notification.(string)), &lbsMessage))
+					require.NoError(t, json.Unmarshal([]byte(msg.Payload.(string)), &lbsMessage))
 					require.NotNil(t, lbsMessage)
 					require.Contains(t, lbsMessage.DataStreamName, "session")
 					require.Contains(t, lbsMessage.Info["key0"], "value")
@@ -392,7 +392,7 @@ func TestMainFlow(t *testing.T) {
 					require.True(t, ok)
 					require.NotNil(t, msg)
 					var lbsMessage notifs.LBSMessage
-					require.NoError(t, json.Unmarshal([]byte(msg.Notification.(string)), &lbsMessage))
+					require.NoError(t, json.Unmarshal([]byte(msg.Payload.(string)), &lbsMessage))
 					require.NotNil(t, lbsMessage)
 					require.Contains(t, lbsMessage.DataStreamName, "session")
 					require.Contains(t, lbsMessage.Info["key1"], "value")
@@ -417,7 +417,7 @@ func TestMainFlow(t *testing.T) {
 	for msg := range opChan1 {
 		switch msg.Type {
 		case notifs.StreamDisowned:
-			require.Equal(t, msg.Notification, "session0")
+			require.Equal(t, msg.Payload, "session0")
 			streamDisowned = true
 		default:
 		}
@@ -448,8 +448,8 @@ func TestMainFlow(t *testing.T) {
 				require.True(t, consumer1Crashed)
 				require.True(t, ok)
 				require.NotNil(t, notif)
-				require.Contains(t, notif.Notification, "session")
-				err = consumer2.Claim(consumer2Ctx, notif.Notification.(string))
+				require.Contains(t, notif.Payload, "session")
+				err = consumer2.Claim(consumer2Ctx, notif.Payload.(string))
 				require.NoError(t, err)
 				res := simpleRedisClient.XInfoStreamFull(context.Background(), "consumer-input", 100)
 				require.NotNil(t, res)
@@ -540,7 +540,7 @@ func listenToKsp(t *testing.T, outputChan <-chan notifs.RecoverableRedisNotifica
 		switch notif.Type {
 		case notifs.StreamExpired:
 			require.NotNil(t, notif)
-			streamThatExpired, ok := notif.Notification.(string)
+			streamThatExpired, ok := notif.Payload.(string)
 			require.True(t, ok)
 			require.Contains(t, streamThatExpired, "session")
 			err := consumers[i].Claim(context.Background(), streamThatExpired)
