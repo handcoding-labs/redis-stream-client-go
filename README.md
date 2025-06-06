@@ -1,3 +1,5 @@
+Interactive demo: https://g.co/gemini/share/999b256cffd3
+
 # redis-stream-client-go
 
 [![Go](https://github.com/badari31/redis-stream-client-go/actions/workflows/go.yml/badge.svg)](https://github.com/badari31/redis-stream-client-go/actions/workflows/go.yml)
