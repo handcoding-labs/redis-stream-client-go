@@ -180,6 +180,41 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	consumer3.Done()
 }
 
+func TestBlockingRead(t *testing.T) {
+	ctx := context.TODO()
+	redisContainer := setupSuite(t)
+
+	redisClient := newRedisClient(redisContainer)
+	res := redisClient.ConfigSet(ctx, types.NotifyKeyspaceEventsCmd, types.KeyspacePatternForExpiredEvents)
+	require.NoError(t, res.Err())
+
+	consumer := createConsumer("111", redisContainer)
+	opChan, err := consumer.Init(ctx)
+	require.NoError(t, err)
+
+	select {
+	case <-opChan:
+		t.Fatalf("unexpected message before add")
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	addNStreamsToLBS(redisContainer, 1)
+
+	var got bool
+	select {
+	case msg := <-opChan:
+		require.Equal(t, notifs.StreamAdded, msg.Type)
+		got = true
+	case <-time.After(2 * time.Second):
+		t.Fatalf("did not receive message")
+	}
+
+	require.True(t, got)
+	consumer.Done()
+	_, ok := <-opChan
+	require.False(t, ok)
+}
+
 func TestKspNotifs(t *testing.T) {
 	ctx := context.TODO()
 	redisContainer := setupSuite(t)
