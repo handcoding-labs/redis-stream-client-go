@@ -40,6 +40,13 @@ func setupSuite(t *testing.T) *redis.RedisContainer {
 	require.True(t, redisContainer != nil)
 	require.True(t, redisContainer.IsRunning())
 
+	t.Cleanup(func() {
+		err := redisContainer.Terminate(context.Background())
+		if err != nil {
+			t.Fatalf("failed to terminate redis container: %v", err)
+		}
+	})
+
 	connString, err := redisContainer.ConnectionString(context.Background())
 	require.NoError(t, err)
 	require.NotEmpty(t, connString)
