@@ -412,22 +412,17 @@ func TestMainFlow(t *testing.T) {
 	consumer1CancelFunc()
 	consumer1Crashed = true
 
-	// check disowned streams
+	// check that no StreamDisowned notification is emitted on normal shutdown
 	streamDisowned := false
-	for msg := range opChan1 {
-		switch msg.Type {
-		case notifs.StreamDisowned:
-			require.Equal(t, msg.Payload, "session0")
+	select {
+	case msg := <-opChan1:
+		if msg.Type == notifs.StreamDisowned {
 			streamDisowned = true
-		default:
 		}
-
-		if streamDisowned {
-			break
-		}
+	case <-time.After(time.Second):
 	}
 
-	require.True(t, streamDisowned)
+	require.False(t, streamDisowned)
 	claimSuccess := false
 	i = 0
 	streamsPickedup = 0
