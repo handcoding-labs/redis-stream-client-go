@@ -124,9 +124,10 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(ctx context.Context, s
 }
 
 func (r *RecoverableRedisStreamClient) startExtendingKey(ctx context.Context, mutex *redsync.Mutex, streamName string) error {
+	extensionFailed := false
 	defer func() {
-		if !r.outputChanClosed.Load() {
-			// if client is still intersted or is coming back from a delay (GC pause etc) then inform about disowning of stream
+		if extensionFailed && !r.outputChanClosed.Load() {
+			// if client is still interested or is coming back from a delay (GC pause etc) then inform about disowning of stream
 			r.outputChan <- notifs.Make(streamName, notifs.StreamDisowned)
 		}
 	}()
@@ -137,6 +138,7 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(ctx context.Context, mu
 		}
 
 		if ok, err := mutex.Extend(); !ok || err != nil {
+			extensionFailed = true
 			return fmt.Errorf("could not extend mutex, err: %s", err)
 		}
 
