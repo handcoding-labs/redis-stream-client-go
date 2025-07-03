@@ -45,7 +45,7 @@ import rsc "github.com/badari31/redis-stream-client-go/impl"
 ```
 
 ```
-client := rsc.NewRedisStreamClient(<go redis client>, <heartbeat_interval>, <service_name>)
+client := rsc.NewRedisStreamClient(<go redis client>, <service_name>)
 ```
 
 Initialize the client and use the LBC and Key space notification channel for tracking which data streams to read and which have expired respectively:
