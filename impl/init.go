@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/go-redsync/redsync/v4"
-	"github.com/go-redsync/redsync/v4/redis/goredis/v9"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -33,8 +32,6 @@ func (r *RecoverableRedisStreamClient) subscribeToExpiredEvents(ctx context.Cont
 }
 
 func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
-	pool := goredis.NewPool(r.redisClient)
-	rs := redsync.New(pool)
 
 	// create group
 	r.redisClient.XGroupCreateMkStream(ctx, r.lbsName(), r.lbsGroupName(), types.StartFromNow)
@@ -60,7 +57,7 @@ func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
 			return
 		}
 
-		if err := r.processLBSMessages(ctx, res.Val(), rs); err != nil {
+		if err := r.processLBSMessages(ctx, res.Val(), r.rs); err != nil {
 			log.Fatal("fatal error while reading lbs: ", err, "exiting...")
 			return
 		}
