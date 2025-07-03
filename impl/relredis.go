@@ -37,6 +37,8 @@ type RecoverableRedisStreamClient struct {
 	outputChan chan notifs.RecoverableRedisNotification[any]
 	// outputChanClosed tracks if the outputChan is still being read by client
 	outputChanClosed atomic.Bool
+	// rs is a shared redsync instance used for distributed locks
+	rs *redsync.Redsync
 }
 
 // NewRedisStreamClient creates a new RedisStreamClient
@@ -66,6 +68,9 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string)
 	// extension failed two consecutive times
 	defaultHBInterval := 2 * time.Second
 
+	pool := goredis.NewPool(redisClient)
+	rs := redsync.New(pool)
+
 	return &RecoverableRedisStreamClient{
 		redisClient:      redisClient,
 		consumerID:       consumerID,
@@ -75,6 +80,7 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string)
 		serviceName:      serviceName,
 		outputChan:       make(chan notifs.RecoverableRedisNotification[any], 500),
 		outputChanClosed: atomic.Bool{},
+		rs:               rs,
 	}
 }
 
@@ -136,10 +142,7 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, mutexKey strin
 		return fmt.Errorf("already claimed")
 	}
 
-	pool := goredis.NewPool(r.redisClient)
-	rs := redsync.New(pool)
-
-	mutex := rs.NewMutex(lbsInfo.getMutexKey(),
+	mutex := r.rs.NewMutex(lbsInfo.getMutexKey(),
 		redsync.WithExpiry(r.hbInterval),
 		redsync.WithFailFast(true),
 		redsync.WithRetryDelay(10*time.Millisecond),
