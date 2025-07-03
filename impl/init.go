@@ -112,7 +112,7 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(ctx context.Context, s
 			// now seed the mutex
 			lbsInfo.Mutex = mutex
 
-			r.streamLocks[message.ID] = lbsInfo
+			r.streamLocks[lbsInfo.DataStreamName] = lbsInfo
 			r.outputChan <- notifs.Make(v, notifs.StreamAdded)
 
 			// now, keep extending the lock in a separate go routine
