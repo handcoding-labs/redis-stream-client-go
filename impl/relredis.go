@@ -221,7 +221,7 @@ func (r *RecoverableRedisStreamClient) cleanup() error {
 	// cancel LBS context
 	r.lbsCtxCancelFunc()
 
-	// close the ouptut channe
+	// close the output channel
 	if r.outputChanClosed.CompareAndSwap(false, true) {
 		close(r.outputChan)
 	}
