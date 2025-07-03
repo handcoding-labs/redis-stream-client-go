@@ -76,7 +76,7 @@ func TestLBS(t *testing.T) {
 	var expectedMsgConsumer2 string
 	var expectedMsgConsumer1 string
 
-	for i := range 2 {
+	for i := 0; i < 2; i++ {
 		log.Println("iteration: ", i)
 		select {
 		case msg, ok := <-opChan1:
