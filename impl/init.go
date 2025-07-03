@@ -50,6 +50,7 @@ func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
 			Group:    r.lbsGroupName(),
 			Consumer: r.consumerID,
 			Streams:  []string{r.lbsName(), types.PendingMsgID},
+			Block:    0,
 		})
 
 		if res.Err() != nil {
@@ -65,8 +66,6 @@ func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
 			return
 		}
 
-		// sleep for a while
-		time.Sleep(5 * time.Millisecond)
 	}
 }
 
