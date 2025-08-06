@@ -1,4 +1,4 @@
-module github.com/badari31/redis-stream-client-go
+module github.com/handcoding-labs/redis-stream-client-go
 
 go 1.22.0
 

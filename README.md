@@ -2,7 +2,7 @@ Interactive demo: https://g.co/gemini/share/999b256cffd3
 
 # redis-stream-client-go
 
-[![Go](https://github.com/badari31/redis-stream-client-go/actions/workflows/go.yml/badge.svg)](https://github.com/badari31/redis-stream-client-go/actions/workflows/go.yml)
+[![Go](https://github.com/handcoding-labs/redis-stream-client-go/actions/workflows/go.yml/badge.svg)](https://github.com/handcoding-labs/redis-stream-client-go/actions/workflows/go.yml)
 
 A redis stream based client that can recover from failures. This lib is based on [go-redis](https://github.com/redis/go-redis) and [redsync](https://github.com/go-redsync/redsync)
 
@@ -35,13 +35,13 @@ In addition to this, for better management, the library provides a load balancer
 Just import the library:
 
 ```
-go get https://github.com/badari31/redis-stream-client-go
+go get https://github.com/handcoding-labs/redis-stream-client-go
 ```
 
 Create the client:
 
 ```
-import rsc "github.com/badari31/redis-stream-client-go/impl"
+import rsc "github.com/handcoding-labs/redis-stream-client-go/impl"
 ```
 
 ```
