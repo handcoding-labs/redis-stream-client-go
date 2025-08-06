@@ -1,8 +1,9 @@
 package impl
 
 import (
-	"bburli/redis-stream-client-go/types"
 	"context"
+
+	"github.com/badari31/redis-stream-client-go/types"
 )
 
 func (r *RecoverableRedisStreamClient) lbsGroupName() string {

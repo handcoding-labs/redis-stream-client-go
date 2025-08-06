@@ -1,9 +1,6 @@
 package test
 
 import (
-	"bburli/redis-stream-client-go/impl"
-	"bburli/redis-stream-client-go/notifs"
-	"bburli/redis-stream-client-go/types"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,6 +8,10 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/badari31/redis-stream-client-go/impl"
+	"github.com/badari31/redis-stream-client-go/notifs"
+	"github.com/badari31/redis-stream-client-go/types"
 
 	redisgo "github.com/redis/go-redis/v9"
 
