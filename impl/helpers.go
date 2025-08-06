@@ -3,7 +3,7 @@ package impl
 import (
 	"context"
 
-	"github.com/badari31/redis-stream-client-go/types"
+	"github.com/handcoding-labs/redis-stream-client-go/types"
 )
 
 func (r *RecoverableRedisStreamClient) lbsGroupName() string {

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/badari31/redis-stream-client-go/impl"
-	"github.com/badari31/redis-stream-client-go/notifs"
-	"github.com/badari31/redis-stream-client-go/types"
+	"github.com/handcoding-labs/redis-stream-client-go/impl"
+	"github.com/handcoding-labs/redis-stream-client-go/notifs"
+	"github.com/handcoding-labs/redis-stream-client-go/types"
 
 	redisgo "github.com/redis/go-redis/v9"
 
