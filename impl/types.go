@@ -1,9 +1,10 @@
 package impl
 
 import (
-	"bburli/redis-stream-client-go/types"
 	"fmt"
 	"strings"
+
+	"github.com/badari31/redis-stream-client-go/types"
 
 	"github.com/go-redsync/redsync/v4"
 )
