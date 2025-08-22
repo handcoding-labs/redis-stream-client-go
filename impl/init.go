@@ -1,14 +1,15 @@
 package impl
 
 import (
-	"bburli/redis-stream-client-go/notifs"
-	"bburli/redis-stream-client-go/types"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"time"
+
+	"github.com/handcoding-labs/redis-stream-client-go/notifs"
+	"github.com/handcoding-labs/redis-stream-client-go/types"
 
 	"github.com/go-redsync/redsync/v4"
 	"github.com/redis/go-redis/v9"

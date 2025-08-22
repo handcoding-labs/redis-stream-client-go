@@ -1,8 +1,9 @@
 package types
 
 import (
-	"bburli/redis-stream-client-go/notifs"
 	"context"
+
+	"github.com/handcoding-labs/redis-stream-client-go/notifs"
 )
 
 // RedisStreamClient is an interface for a Redis Stream client
