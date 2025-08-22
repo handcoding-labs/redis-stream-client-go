@@ -31,11 +31,46 @@ func (r *RecoverableRedisStreamClient) subscribeToExpiredEvents(ctx context.Cont
 	return nil
 }
 
+func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
+	xpendingCmdRes := r.redisClient.XPending(ctx, r.lbsName(), r.lbsGroupName())
+
+	if xpendingCmdRes.Err() != nil {
+		log.Fatal("error while getting unacked messages: ", xpendingCmdRes.Err())
+		return
+	}
+
+	xpendingInfo := xpendingCmdRes.Val()
+	if xpendingInfo == nil || xpendingInfo.Count == 0 {
+		log.Println("no unacked messages found in LBS for consumer, skipping recovery")
+		return
+	}
+
+	log.Println("unacked messages found in LBS for consumer: ", xpendingInfo)
+
+	lowestID := xpendingInfo.Lower
+	highestID := xpendingInfo.Higher
+
+	xrangeCmdRes := r.redisClient.XRange(ctx, r.lbsName(), lowestID, highestID)
+	if xrangeCmdRes.Err() != nil {
+		log.Fatal("error while getting unacked messages: ", xrangeCmdRes.Err())
+		return
+	}
+
+	streams := []redis.XStream{
+		{
+			Stream:   r.lbsName(),
+			Messages: xrangeCmdRes.Val(),
+		},
+	}
+
+	// process the message
+	if err := r.processLBSMessages(ctx, streams, r.rs); err != nil {
+		log.Fatal("fatal error while processing unacked messages: ", err, "exiting...")
+		return
+	}
+}
+
 func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
-
-	// create group
-	r.redisClient.XGroupCreateMkStream(ctx, r.lbsName(), r.lbsGroupName(), types.StartFromNow)
-
 	for {
 		// check if context is done
 		if r.isContextDone(ctx) {

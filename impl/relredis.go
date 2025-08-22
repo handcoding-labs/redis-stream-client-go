@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -103,6 +104,15 @@ func (r *RecoverableRedisStreamClient) Init(ctx context.Context) (<-chan notifs.
 
 	lbsCtx, cancelFunc := context.WithCancel(ctx)
 	r.lbsCtxCancelFunc = cancelFunc
+
+	// create group
+	res := r.redisClient.XGroupCreateMkStream(ctx, r.lbsName(), r.lbsGroupName(), types.StartFromNow)
+	if res.Err() != nil && !strings.Contains(res.Err().Error(), "BUSYGROUP") {
+		return nil, res.Err()
+	}
+
+	// recovery of unacked LBS messages
+	r.recoverUnackedLBS(lbsCtx)
 
 	// start blocking read on LBS stream
 	go r.readLBSStream(lbsCtx)

@@ -5,6 +5,7 @@ const (
 	InputSuffix                     = "-input"
 	PendingMsgID                    = ">"
 	StartFromNow                    = "$"
+	StartFromEnd                    = "-"
 	ExpiredEventPattern             = "__keyevent@0__:expired"
 	NotifyKeyspaceEventsCmd         = "notify-keyspace-events"
 	KeyspacePatternForExpiredEvents = "Ex"
