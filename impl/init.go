@@ -32,7 +32,15 @@ func (r *RecoverableRedisStreamClient) subscribeToExpiredEvents(ctx context.Cont
 }
 
 func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
-	xpendingCmdRes := r.redisClient.XPending(ctx, r.lbsName(), r.lbsGroupName())
+	xpendingCmdRes := r.redisClient.XPendingExt(ctx, &redis.XPendingExtArgs{
+		Stream:   r.lbsName(),
+		Group:    r.lbsGroupName(),
+		Idle:     time.Minute * 10,
+		Start:    types.StartFromStart,
+		End:      types.StartFromEnd,
+		Count:    1000,
+		Consumer: r.consumerID,
+	})
 
 	if xpendingCmdRes.Err() != nil {
 		log.Fatal("error while getting unacked messages: ", xpendingCmdRes.Err())
@@ -40,17 +48,14 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
 	}
 
 	xpendingInfo := xpendingCmdRes.Val()
-	if xpendingInfo == nil || xpendingInfo.Count == 0 {
+	if len(xpendingInfo) == 0 {
 		log.Println("no unacked messages found in LBS for consumer, skipping recovery")
 		return
 	}
 
 	log.Println("unacked messages found in LBS for consumer: ", xpendingInfo)
 
-	lowestID := xpendingInfo.Lower
-	highestID := xpendingInfo.Higher
-
-	xrangeCmdRes := r.redisClient.XRange(ctx, r.lbsName(), lowestID, highestID)
+	xrangeCmdRes := r.redisClient.XRange(ctx, r.lbsName(), xpendingInfo[0].ID, xpendingInfo[len(xpendingInfo)-1].ID)
 	if xrangeCmdRes.Err() != nil {
 		log.Fatal("error while getting unacked messages: ", xrangeCmdRes.Err())
 		return

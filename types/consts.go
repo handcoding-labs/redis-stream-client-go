@@ -6,6 +6,8 @@ const (
 	PendingMsgID                    = ">"
 	StartFromNow                    = "$"
 	StartFromEnd                    = "-"
+	StartFromStart                  = "+"
+	StartFromBegining               = "0"
 	ExpiredEventPattern             = "__keyevent@0__:expired"
 	NotifyKeyspaceEventsCmd         = "notify-keyspace-events"
 	KeyspacePatternForExpiredEvents = "Ex"
