@@ -3,7 +3,7 @@ module github.com/handcoding-labs/redis-stream-client-go
 go 1.23.0
 
 require (
-	github.com/redis/go-redis/v9 v9.6.1
+	github.com/redis/go-redis/v9 v9.6.3
 	github.com/testcontainers/testcontainers-go/modules/redis v0.32.0
 )
 
