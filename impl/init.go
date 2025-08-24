@@ -36,10 +36,10 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
 	xpendingCmdRes := r.redisClient.XPendingExt(ctx, &redis.XPendingExtArgs{
 		Stream:   r.lbsName(),
 		Group:    r.lbsGroupName(),
-		Idle:     time.Minute * 10,
-		Start:    types.StartFromStart,
-		End:      types.StartFromEnd,
-		Count:    1000,
+		Idle:     r.lbsIdleTime,
+		Start:    types.MinimalRangeID,
+		End:      types.MaximalRangeID,
+		Count:    int64(r.lbsRecoveryCount),
 		Consumer: r.consumerID,
 	})
 
