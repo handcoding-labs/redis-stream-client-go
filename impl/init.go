@@ -34,13 +34,12 @@ func (r *RecoverableRedisStreamClient) subscribeToExpiredEvents(ctx context.Cont
 
 func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
 	xpendingCmdRes := r.redisClient.XPendingExt(ctx, &redis.XPendingExtArgs{
-		Stream:   r.lbsName(),
-		Group:    r.lbsGroupName(),
-		Idle:     r.lbsIdleTime,
-		Start:    types.MinimalRangeID,
-		End:      types.MaximalRangeID,
-		Count:    int64(r.lbsRecoveryCount),
-		Consumer: r.consumerID,
+		Stream: r.lbsName(),
+		Group:  r.lbsGroupName(),
+		Idle:   r.lbsIdleTime,
+		Start:  types.MinimalRangeID,
+		End:    types.MaximalRangeID,
+		Count:  int64(r.lbsRecoveryCount),
 	})
 
 	if xpendingCmdRes.Err() != nil {
