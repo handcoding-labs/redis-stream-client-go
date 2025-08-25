@@ -61,17 +61,40 @@ There are currently three types of notifications sent on `outputChan`:
 
 # claiming
 
-```
-err := client.Claim(ctx, <ksp notification payload>)
-```
-
-An error in `Claim` indicates the client was not successful in claiming the stream as some other client got there before.
-
-After all the processing is done, call `Done` on client to mark end for a particular data stream that the consumer owns.
+When you receive a `StreamExpired` notification, you can claim the expired stream using the mutex key from the notification payload:
 
 ```
-client.Done(ctx)
+err := client.Claim(ctx, <ksp_notification_payload>)
 ```
+
+The <ksp_notification_payload> is in the format `data_stream_name:message_id_in_lbs`. An error in `Claim` indicates the client was not successful in claiming the stream as some other client got there before.
+
+# stream lifecycle management
+
+The library provides granular control over stream lifecycle:
+
+## processing individual streams
+
+After processing is done for a specific data stream, call `DoneStream` to mark the end of processing for that particular stream:
+
+```
+err := client.DoneStream(ctx, <data_stream_name>)
+```
+
+This method:
+- Unlocks the distributed lock for the stream
+- Acknowledges the message in the LBS stream
+- Cleans up internal state for that specific stream
+
+## client shutdown
+
+When the client is shutting down completely, call `Done` to clean up all streams handled by the client:
+
+```
+err := client.Done()
+```
+
+This method calls `DoneStream` for all active streams and then performs additional cleanup like closing channels and canceling contexts.
 
 Method `ID()` can be used to obtain client ID for logging purposes:
 
