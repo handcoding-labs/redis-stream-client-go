@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -40,13 +41,17 @@ type RecoverableRedisStreamClient struct {
 	outputChanClosed atomic.Bool
 	// rs is a shared redsync instance used for distributed locks
 	rs *redsync.Redsync
+	// lbsIdleTime is the time after which a message is considered idle
+	lbsIdleTime time.Duration
+	// lbsRecoveryCount is the number of times a message is recovered
+	lbsRecoveryCount int
 }
 
 // NewRedisStreamClient creates a new RedisStreamClient
 //
 // This function creates a new RedisStreamClient with the given redis client and stream name
 // Stream is the name of the stream to read from where actual data is transmitted
-func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string) types.RedisStreamClient {
+func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string, opts ...RecoverableRedisOption) types.RedisStreamClient {
 	// obtain consumer name via kubernetes downward api
 	podName := os.Getenv(types.PodName)
 	podIP := os.Getenv(types.PodIP)
@@ -72,7 +77,7 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string)
 	pool := goredis.NewPool(redisClient)
 	rs := redsync.New(pool)
 
-	return &RecoverableRedisStreamClient{
+	r := &RecoverableRedisStreamClient{
 		redisClient:      redisClient,
 		consumerID:       consumerID,
 		kspChan:          make(chan *redis.Message, 500),
@@ -83,6 +88,12 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string)
 		outputChanClosed: atomic.Bool{},
 		rs:               rs,
 	}
+
+	for _, opt := range opts {
+		opt(r)
+	}
+
+	return r
 }
 
 // ID returns the consumer name that uniquely identifies the consumer
@@ -104,6 +115,15 @@ func (r *RecoverableRedisStreamClient) Init(ctx context.Context) (<-chan notifs.
 
 	lbsCtx, cancelFunc := context.WithCancel(ctx)
 	r.lbsCtxCancelFunc = cancelFunc
+
+	// create group
+	res := r.redisClient.XGroupCreateMkStream(ctx, r.lbsName(), r.lbsGroupName(), types.StartFromNow)
+	if res.Err() != nil && !strings.Contains(res.Err().Error(), "BUSYGROUP") {
+		return nil, res.Err()
+	}
+
+	// recovery of unacked LBS messages
+	r.recoverUnackedLBS(lbsCtx)
 
 	// start blocking read on LBS stream
 	go r.readLBSStream(lbsCtx)
