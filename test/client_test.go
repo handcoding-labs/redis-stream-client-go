@@ -134,6 +134,46 @@ func TestLBS(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestLBSRecovery(t *testing.T) {
+	ctxWCancel, cancelFunc := context.WithCancel(context.Background())
+	ctx := context.TODO()
+	redisContainer := setupSuite(t)
+
+	redisClient := newRedisClient(redisContainer)
+	res := redisClient.ConfigSet(ctx, types.NotifyKeyspaceEventsCmd, types.KeyspacePatternForExpiredEvents)
+	require.NoError(t, res.Err())
+
+	consumer := createConsumer("111", redisContainer)
+	opChan, err := consumer.Init(ctxWCancel)
+	require.NoError(t, err)
+	require.NotNil(t, opChan)
+
+	addNStreamsToLBS(redisContainer, 1)
+
+	time.Sleep(1 * time.Second)
+
+	// kill consumer don't ack the message
+	cancelFunc()
+
+	// restart consumer
+	consumer = createConsumer("111", redisContainer)
+	opChan, err = consumer.Init(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, opChan)
+
+	select {
+	case msg, ok := <-opChan:
+		if ok {
+			t.Log("received message after recovery: ", msg)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("did not receive message after recovery")
+	}
+	consumer.Done()
+	_, ok := <-opChan
+	require.False(t, ok)
+}
+
 func TestClaimWorksOnlyOnce(t *testing.T) {
 	ctxWCancel, cancelFunc := context.WithCancel(context.Background())
 	ctxWOCancel := context.Background()
