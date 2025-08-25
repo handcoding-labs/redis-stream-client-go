@@ -186,8 +186,11 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, mutexKey strin
 	return nil
 }
 
-// DoneDataStream marks end of processing for a particular stream
-func (r *RecoverableRedisStreamClient) doneDataStream(ctx context.Context, dataStreamName string) error {
+// DoneStream marks end of processing for a particular stream
+//
+// This function is used to mark the end of processing for a particular stream
+// It unlocks the stream and acknowledges the message and cleans up internal state
+func (r *RecoverableRedisStreamClient) DoneStream(ctx context.Context, dataStreamName string) error {
 	lbsInfo, ok := r.streamLocks[dataStreamName]
 	if !ok {
 		return fmt.Errorf("stream not found")
@@ -214,11 +217,15 @@ func (r *RecoverableRedisStreamClient) doneDataStream(ctx context.Context, dataS
 }
 
 // Done marks the end of processing for a client
+//
+// Note that done is called when the client is shutting down and is not expected to be called again
+// It cleans up all the streams handled by the client
+// To cleanup a specific stream, use DoneStream
 func (r *RecoverableRedisStreamClient) Done() error {
 	ctx := context.Background()
 
 	for streamName := range r.streamLocks {
-		if err := r.doneDataStream(ctx, streamName); err != nil {
+		if err := r.DoneStream(ctx, streamName); err != nil {
 			return err
 		}
 	}
