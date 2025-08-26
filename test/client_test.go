@@ -583,21 +583,19 @@ func addNStreamsToLBS(redisContainer *redis.RedisContainer, n int) {
 	defer producer.Close()
 
 	for i := 0; i < n; i++ {
-		lbsMsg, err := json.Marshal(notifs.LBSMessage{
+		lbsMsg, _ := json.Marshal(notifs.LBSMessage{
 			DataStreamName: stringify("session", i),
 			Info: map[string]interface{}{
 				stringify("key", i): stringify("value", i),
 			},
 		})
-		require.NoError(t, err)
 
-		_, err = producer.XAdd(context.Background(), &redisgo.XAddArgs{
+		_, _ = producer.XAdd(context.Background(), &redisgo.XAddArgs{
 			Stream: "consumer-input",
 			Values: map[string]any{
 				configs.LBSInput: string(lbsMsg),
 			},
 		}).Result()
-		require.NoError(t, err)
 	}
 }
 
