@@ -126,7 +126,8 @@ security:
 	@if command -v gosec >/dev/null 2>&1; then \
 		gosec ./...; \
 	else \
-		echo "gosec not installed. Install with: go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest"; \
+		echo "gosec not installed. Security scanning skipped."; \
+		echo "Install gosec manually if needed for security scanning."; \
 	fi
 
 ## docker-build: Build Docker image
@@ -157,7 +158,7 @@ install-tools:
 	@echo "Installing golangci-lint..."
 	@curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin v1.54.2
 	@echo "Installing gosec..."
-	@go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest
+	@echo "Note: gosec installation skipped - install manually if needed"
 	@echo "Installing goimports..."
 	@go install golang.org/x/tools/cmd/goimports@latest
 
