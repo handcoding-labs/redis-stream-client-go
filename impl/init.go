@@ -8,8 +8,8 @@ import (
 	"log"
 	"time"
 
+	"github.com/handcoding-labs/redis-stream-client-go/configs"
 	"github.com/handcoding-labs/redis-stream-client-go/notifs"
-	"github.com/handcoding-labs/redis-stream-client-go/types"
 
 	"github.com/go-redsync/redsync/v4"
 	"github.com/redis/go-redis/v9"
@@ -18,7 +18,7 @@ import (
 func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx context.Context) error {
 	// subscribe to key space events for expiration only
 	// https://redis.io/docs/latest/develop/use/keyspace-notifications/
-	res := r.redisClient.ConfigSet(ctx, types.NotifyKeyspaceEventsCmd, types.KeyspacePatternForExpiredEvents)
+	res := r.redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
 	if res.Err() != nil {
 		return res.Err()
 	}
@@ -27,7 +27,7 @@ func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx 
 }
 
 func (r *RecoverableRedisStreamClient) subscribeToExpiredEvents(ctx context.Context) error {
-	r.pubSub = r.redisClient.PSubscribe(ctx, types.ExpiredEventPattern)
+	r.pubSub = r.redisClient.PSubscribe(ctx, configs.ExpiredEventPattern)
 	r.kspChan = r.pubSub.Channel(redis.WithChannelHealthCheckInterval(1*time.Second), redis.WithChannelSendTimeout(10*time.Minute))
 	return nil
 }
@@ -37,8 +37,8 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
 		Stream: r.lbsName(),
 		Group:  r.lbsGroupName(),
 		Idle:   r.lbsIdleTime,
-		Start:  types.MinimalRangeID,
-		End:    types.MaximalRangeID,
+		Start:  configs.MinimalRangeID,
+		End:    configs.MaximalRangeID,
 		Count:  int64(r.lbsRecoveryCount),
 	})
 
@@ -86,7 +86,7 @@ func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
 		res := r.redisClient.XReadGroup(ctx, &redis.XReadGroupArgs{
 			Group:    r.lbsGroupName(),
 			Consumer: r.consumerID,
-			Streams:  []string{r.lbsName(), types.PendingMsgID},
+			Streams:  []string{r.lbsName(), configs.PendingMsgID},
 			Block:    0,
 		})
 
@@ -110,7 +110,7 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(ctx context.Context, s
 	for _, stream := range streams {
 		for _, message := range stream.Messages {
 			// has to be an LBS message
-			v, ok := message.Values[types.LBSInput]
+			v, ok := message.Values[configs.LBSInput]
 			if !ok {
 				return fmt.Errorf("invalid message on LBS stream, must be an LBS message type")
 			}

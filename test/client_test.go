@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/handcoding-labs/redis-stream-client-go/configs"
 	"github.com/handcoding-labs/redis-stream-client-go/impl"
 	"github.com/handcoding-labs/redis-stream-client-go/notifs"
 	"github.com/handcoding-labs/redis-stream-client-go/types"
-
 	redisgo "github.com/redis/go-redis/v9"
 
 	"github.com/stretchr/testify/require"
@@ -53,7 +53,7 @@ func TestLBS(t *testing.T) {
 	redisContainer := setupSuite(t)
 
 	redisClient := newRedisClient(redisContainer)
-	res := redisClient.ConfigSet(ctx, types.NotifyKeyspaceEventsCmd, types.KeyspacePatternForExpiredEvents)
+	res := redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
 	require.NoError(t, res.Err())
 
 	// create consumer1 client
@@ -140,7 +140,7 @@ func TestLBSRecovery(t *testing.T) {
 	redisContainer := setupSuite(t)
 
 	redisClient := newRedisClient(redisContainer)
-	res := redisClient.ConfigSet(ctx, types.NotifyKeyspaceEventsCmd, types.KeyspacePatternForExpiredEvents)
+	res := redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
 	require.NoError(t, res.Err())
 
 	consumer := createConsumer("111", redisContainer)
@@ -181,7 +181,7 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	redisContainer := setupSuite(t)
 
 	redisClient := newRedisClient(redisContainer)
-	res := redisClient.ConfigSet(ctxWOCancel, types.NotifyKeyspaceEventsCmd, types.KeyspacePatternForExpiredEvents)
+	res := redisClient.ConfigSet(ctxWOCancel, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
 	require.NoError(t, res.Err())
 
 	// create consumer1 client
@@ -226,7 +226,7 @@ func TestBlockingRead(t *testing.T) {
 	redisContainer := setupSuite(t)
 
 	redisClient := newRedisClient(redisContainer)
-	res := redisClient.ConfigSet(ctx, types.NotifyKeyspaceEventsCmd, types.KeyspacePatternForExpiredEvents)
+	res := redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
 	require.NoError(t, res.Err())
 
 	consumer := createConsumer("111", redisContainer)
@@ -261,10 +261,10 @@ func TestKspNotifs(t *testing.T) {
 	redisContainer := setupSuite(t)
 
 	redisClient := newRedisClient(redisContainer)
-	res := redisClient.ConfigSet(ctx, types.NotifyKeyspaceEventsCmd, types.KeyspacePatternForExpiredEvents)
+	res := redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
 	require.NoError(t, res.Err())
 
-	pubsub := redisClient.PSubscribe(ctx, types.ExpiredEventPattern)
+	pubsub := redisClient.PSubscribe(ctx, configs.ExpiredEventPattern)
 	kspChan := pubsub.Channel(redisgo.WithChannelHealthCheckInterval(1*time.Second), redisgo.WithChannelSendTimeout(10*time.Minute))
 
 	// now add a key and check if it times out
@@ -594,7 +594,7 @@ func addNStreamsToLBS(redisContainer *redis.RedisContainer, n int) {
 		producer.XAdd(context.Background(), &redisgo.XAddArgs{
 			Stream: "consumer-input",
 			Values: map[string]any{
-				types.LBSInput: string(lbsMsg),
+				configs.LBSInput: string(lbsMsg),
 			},
 		}).Result()
 	}

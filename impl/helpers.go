@@ -3,15 +3,15 @@ package impl
 import (
 	"context"
 
-	"github.com/handcoding-labs/redis-stream-client-go/types"
+	"github.com/handcoding-labs/redis-stream-client-go/configs"
 )
 
 func (r *RecoverableRedisStreamClient) lbsGroupName() string {
-	return r.serviceName + types.GroupSuffix
+	return r.serviceName + configs.GroupSuffix
 }
 
 func (r *RecoverableRedisStreamClient) lbsName() string {
-	return r.serviceName + types.InputSuffix
+	return r.serviceName + configs.InputSuffix
 }
 
 func (r *RecoverableRedisStreamClient) checkErr(ctx context.Context, fn func(context.Context) error) *RecoverableRedisStreamClient {
