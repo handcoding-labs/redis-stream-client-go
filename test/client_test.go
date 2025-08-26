@@ -125,8 +125,10 @@ func TestLBS(t *testing.T) {
 		}
 	}
 
-	_ = consumer1.Done()
-	_ = consumer2.Done()
+	err = consumer1.Done()
+	require.NoError(t, err)
+	err = consumer2.Done()
+	require.NoError(t, err)
 
 	_, ok := <-opChan1
 	require.False(t, ok)
@@ -441,7 +443,6 @@ func TestMainFlow(t *testing.T) {
 
 	i := 0
 	for {
-
 		if streamsPickedup == 2 {
 			readingSuccess = true
 			break
@@ -508,7 +509,6 @@ func TestMainFlow(t *testing.T) {
 	i = 0
 	streamsPickedup = 0
 	for {
-
 		log.Println("iteration ", i)
 
 		if i == 10 || claimSuccess {
