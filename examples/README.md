@@ -10,9 +10,6 @@ Simple example showing how to set up a client, initialize it, and handle basic s
 ### 2. [Load Balancing](./load-balancing/)
 Demonstrates how multiple consumers work together to process streams in a load-balanced fashion.
 
-### 3. [Failure Recovery](./failure-recovery/)
-Shows how the library handles consumer failures and automatic stream claiming.
-
 ## Prerequisites
 
 Before running the examples, ensure you have:
