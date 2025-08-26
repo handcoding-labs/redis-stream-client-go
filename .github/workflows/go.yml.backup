@@ -5,7 +5,7 @@ name: CI
 
 on:
   push:
-    branches: [ "main", "31-idle-timeout-for-recovery-should-not-exceed-heartbeat-interval-by-a-factor" ]
+    branches: [ "main", "33-improve-repo-standards" ]
   pull_request:
     branches: [ "main" ]
   schedule:
@@ -14,7 +14,7 @@ on:
 
 env:
   GO_VERSION_MATRIX: '["1.22", "1.23"]'
-  GOLANGCI_LINT_VERSION: 'v1.61.0'
+  GOLANGCI_LINT_VERSION: 'v1.54.2'
 
 jobs:
   # Code quality and linting
@@ -56,7 +56,7 @@ jobs:
         run: go vet ./...
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v4
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
           args: --timeout=5m
@@ -98,11 +98,12 @@ jobs:
 
   # Build and test matrix
   test:
-    name: Test (Go ${{ matrix.go-version }})
-    runs-on: ubuntu-latest
+    name: Test (Go ${{ matrix.go-version }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
         go-version: [1.22, 1.23]
     
     steps:
@@ -125,11 +126,16 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Set environment variables
+      - name: Set environment variables (Unix)
+        if: runner.os != 'Windows'
         run: echo "POD_NAME=test-consumer-${{ github.run_id }}" >> $GITHUB_ENV
 
-      - name: Build
-        run: go build -v ./...
+      - name: Set environment variables (Windows)
+        if: runner.os == 'Windows'
+        run: echo "POD_NAME=test-consumer-${{ github.run_id }}" >> $env:GITHUB_ENV
+
+    - name: Build
+      run: go build -v ./...
 
       - name: Run tests
         run: go test -v -race -coverprofile=coverage.out ./...
@@ -138,21 +144,22 @@ jobs:
         run: go tool cover -html=coverage.out -o coverage.html
 
       - name: Upload coverage to Codecov
-        if: matrix.go-version == '1.23'
-        uses: codecov/codecov-action@v4
+        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23'
+        uses: codecov/codecov-action@v3
         with:
           file: ./coverage.out
           flags: unittests
           name: codecov-umbrella
 
       - name: Upload coverage artifacts
-        if: matrix.go-version == '1.23'
+        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23'
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report
+          name: coverage-report-${{ github.run_id }}
           path: |
             coverage.out
             coverage.html
+          include-hidden-files: false
 
   # Benchmark tests
   benchmark:
@@ -187,8 +194,9 @@ jobs:
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
-          name: benchmark-results
+          name: benchmark-results-${{ github.run_id }}
           path: benchmark.txt
+          include-hidden-files: false
 
   # Build verification
   build:

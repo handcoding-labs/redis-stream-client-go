@@ -13,8 +13,10 @@ type RedisStreamClient interface {
 	ID() string
 	// Init Initialize the client
 	//
-	// Returns the load balanced stream (LBS) channel. This channel should be used by consumers to find out which new data stream has been added for processing. Equivalent to kafka's topic.
-	// 		   the key space notifications (ksp) channel. This channel should be used by consumers to find out if any of the streams has expired. All notifications will come to kspchan.
+	// Returns the load balanced stream (LBS) channel. This channel should be used by consumers
+	// to find out which new data stream has been added for processing. Equivalent to kafka's topic.
+	// 		   the key space notifications (ksp) channel. This channel should be used by consumers
+	// to find out if any of the streams has expired. All notifications will come to kspchan.
 	// 		   error if there is any in initialization
 	Init(ctx context.Context) (outputChan <-chan notifs.RecoverableRedisNotification[any], err error)
 	// Claim allows for a consumer to claim data stream from another failed consumer

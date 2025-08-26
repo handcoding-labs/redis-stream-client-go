@@ -9,11 +9,12 @@ import (
 	"testing"
 	"time"
 
+	redisgo "github.com/redis/go-redis/v9"
+
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
 	"github.com/handcoding-labs/redis-stream-client-go/impl"
 	"github.com/handcoding-labs/redis-stream-client-go/notifs"
 	"github.com/handcoding-labs/redis-stream-client-go/types"
-	redisgo "github.com/redis/go-redis/v9"
 
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go/modules/redis"
@@ -124,8 +125,8 @@ func TestLBS(t *testing.T) {
 		}
 	}
 
-	consumer1.Done()
-	consumer2.Done()
+	_ = consumer1.Done()
+	_ = consumer2.Done()
 
 	_, ok := <-opChan1
 	require.False(t, ok)
@@ -169,7 +170,7 @@ func TestLBSRecovery(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatalf("did not receive message after recovery")
 	}
-	consumer.Done()
+	_ = consumer.Done()
 	_, ok := <-opChan
 	require.False(t, ok)
 }
@@ -211,14 +212,14 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	cancelFunc()
 
 	// consumer2 and consumer3 try to claim at the same time
-	consumer2.Claim(ctxWOCancel, "session0:0")
+	_ = consumer2.Claim(ctxWOCancel, "session0:0")
 	err = consumer3.Claim(ctxWOCancel, "session0:0")
 	require.Error(t, err)
 	require.Equal(t, err, fmt.Errorf("already claimed"))
 
 	// Done is not called on consumer1 as it's crashed
-	consumer2.Done()
-	consumer3.Done()
+	_ = consumer2.Done()
+	_ = consumer3.Done()
 }
 
 func TestBlockingRead(t *testing.T) {
@@ -251,7 +252,7 @@ func TestBlockingRead(t *testing.T) {
 	}
 
 	require.True(t, got)
-	consumer.Done()
+	_ = consumer.Done()
 	_, ok := <-opChan
 	require.False(t, ok)
 }
@@ -434,7 +435,6 @@ func TestMainFlow(t *testing.T) {
 	readingSuccess := false
 
 	i := 0
-
 	for {
 
 		if streamsPickedup == 2 {
@@ -502,7 +502,6 @@ func TestMainFlow(t *testing.T) {
 	claimSuccess := false
 	i = 0
 	streamsPickedup = 0
-
 	for {
 
 		log.Println("iteration ", i)
@@ -560,9 +559,9 @@ func TestMainFlow(t *testing.T) {
 	require.Less(t, i, 10)
 
 	require.True(t, gotNotification)
-	consumer2.Done()
+	_ = consumer2.Done()
 	// no Done is called on consumer1 because it crashed
-	// either Done is called or context is cancelled
+	// either Done is called or context is canceled
 
 	// cancel the context
 	consumer2CancelFunc()
@@ -584,19 +583,21 @@ func addNStreamsToLBS(redisContainer *redis.RedisContainer, n int) {
 	defer producer.Close()
 
 	for i := 0; i < n; i++ {
-		lbsMsg, _ := json.Marshal(notifs.LBSMessage{
+		lbsMsg, err := json.Marshal(notifs.LBSMessage{
 			DataStreamName: stringify("session", i),
 			Info: map[string]interface{}{
 				stringify("key", i): stringify("value", i),
 			},
 		})
+		require.NoError(t, err)
 
-		producer.XAdd(context.Background(), &redisgo.XAddArgs{
+		_, err = producer.XAdd(context.Background(), &redisgo.XAddArgs{
 			Stream: "consumer-input",
 			Values: map[string]any{
 				configs.LBSInput: string(lbsMsg),
 			},
 		}).Result()
+		require.NoError(t, err)
 	}
 }
 
