@@ -1,0 +1,201 @@
+# Docker Compose for Redis Stream Client Go Development Environment
+version: '3.8'
+
+services:
+  # Redis server
+  redis:
+    image: redis:7.2.3-alpine
+    container_name: redis-stream-dev
+    ports:
+      - "6379:6379"
+    command: redis-server --notify-keyspace-events Ex --appendonly yes
+    volumes:
+      - redis_data:/data
+      - ./docker/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - redis-stream-network
+
+  # Redis Insight for monitoring (optional)
+  redis-insight:
+    image: redislabs/redisinsight:latest
+    container_name: redis-insight
+    ports:
+      - "8001:8001"
+    environment:
+      - RIPORT=8001
+    volumes:
+      - redis_insight_data:/db
+    networks:
+      - redis-stream-network
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # Development environment
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: redis-stream-dev-env
+    volumes:
+      - .:/app
+      - go_mod_cache:/go/pkg/mod
+    environment:
+      - POD_NAME=dev-consumer-1
+      - GO_ENV=development
+      - REDIS_URL=redis:6379
+    working_dir: /app
+    command: tail -f /dev/null  # Keep container running
+    networks:
+      - redis-stream-network
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # Consumer 1
+  consumer1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: consumer-1
+    volumes:
+      - .:/app
+      - go_mod_cache:/go/pkg/mod
+    environment:
+      - POD_NAME=consumer-1
+      - REDIS_URL=redis:6379
+    working_dir: /app
+    command: go run ./examples/load-balancing
+    networks:
+      - redis-stream-network
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # Consumer 2
+  consumer2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: consumer-2
+    volumes:
+      - .:/app
+      - go_mod_cache:/go/pkg/mod
+    environment:
+      - POD_NAME=consumer-2
+      - REDIS_URL=redis:6379
+    working_dir: /app
+    command: go run ./examples/load-balancing
+    networks:
+      - redis-stream-network
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # Consumer 3
+  consumer3:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: consumer-3
+    volumes:
+      - .:/app
+      - go_mod_cache:/go/pkg/mod
+    environment:
+      - POD_NAME=consumer-3
+      - REDIS_URL=redis:6379
+    working_dir: /app
+    command: go run ./examples/load-balancing
+    networks:
+      - redis-stream-network
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # Producer
+  producer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: producer
+    volumes:
+      - .:/app
+      - go_mod_cache:/go/pkg/mod
+    environment:
+      - REDIS_URL=redis:6379
+    working_dir: /app
+    command: go run ./examples/load-balancing producer
+    networks:
+      - redis-stream-network
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # Testing environment
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: testing
+    container_name: redis-stream-test
+    volumes:
+      - .:/app
+      - go_mod_cache:/go/pkg/mod
+    environment:
+      - POD_NAME=test-consumer
+      - GO_ENV=test
+    working_dir: /app
+    networks:
+      - redis-stream-network
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # Linting environment
+  lint:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: linting
+    container_name: redis-stream-lint
+    volumes:
+      - .:/app
+      - go_mod_cache:/go/pkg/mod
+    working_dir: /app
+
+  # Security scanning environment
+  security:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: security
+    container_name: redis-stream-security
+    volumes:
+      - .:/app
+      - go_mod_cache:/go/pkg/mod
+    working_dir: /app
+
+volumes:
+  redis_data:
+    driver: local
+  redis_insight_data:
+    driver: local
+  go_mod_cache:
+    driver: local
+
+networks:
+  redis-stream-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
