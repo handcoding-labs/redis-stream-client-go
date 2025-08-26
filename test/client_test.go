@@ -310,7 +310,7 @@ func TestKspNotifsBulk(t *testing.T) {
 	cancelFuncs := make(map[int]context.CancelFunc)
 	var outputChans []<-chan notifs.RecoverableRedisNotification[any]
 
-	for i := range totalConsumers {
+	for i := 0; i < totalConsumers; i++ {
 		ctxWithCancel := context.TODO()
 		ctx, cancel := context.WithCancel(ctxWithCancel)
 
@@ -583,7 +583,7 @@ func addNStreamsToLBS(redisContainer *redis.RedisContainer, n int) {
 	producer := newRedisClient(redisContainer)
 	defer producer.Close()
 
-	for i := range n {
+	for i := 0; i < n; i++ {
 		lbsMsg, _ := json.Marshal(notifs.LBSMessage{
 			DataStreamName: stringify("session", i),
 			Info: map[string]interface{}{
