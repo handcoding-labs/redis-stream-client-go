@@ -1,0 +1,67 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+*.md
+!README.md
+docs/
+imgs/
+
+# Build artifacts
+bin/
+dist/
+build/
+*.out
+*.prof
+coverage.html
+coverage.xml
+profile.cov
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Local environment files
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# CI/CD
+.github/
+
+# Test files (keep for development builds)
+# *_test.go
+
+# Vendor (if using)
+vendor/
+
+# Go workspace
+go.work
+go.work.sum
+
+# Cache directories
+.cache/
+node_modules/
