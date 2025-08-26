@@ -50,6 +50,7 @@ services:
       - POD_NAME=dev-consumer-1
       - GO_ENV=development
       - REDIS_URL=redis:6379
+      - REDIS_ADDR=redis:6379
     working_dir: /app
     command: tail -f /dev/null  # Keep container running
     networks:
@@ -71,6 +72,7 @@ services:
     environment:
       - POD_NAME=consumer-1
       - REDIS_URL=redis:6379
+      - REDIS_ADDR=redis:6379
     working_dir: /app
     command: go run ./examples/load-balancing
     networks:
@@ -92,6 +94,7 @@ services:
     environment:
       - POD_NAME=consumer-2
       - REDIS_URL=redis:6379
+      - REDIS_ADDR=redis:6379
     working_dir: /app
     command: go run ./examples/load-balancing
     networks:
@@ -113,6 +116,7 @@ services:
     environment:
       - POD_NAME=consumer-3
       - REDIS_URL=redis:6379
+      - REDIS_ADDR=redis:6379
     working_dir: /app
     command: go run ./examples/load-balancing
     networks:
@@ -133,6 +137,7 @@ services:
       - go_mod_cache:/go/pkg/mod
     environment:
       - REDIS_URL=redis:6379
+      - REDIS_ADDR=redis:6379
     working_dir: /app
     command: go run ./examples/load-balancing producer
     networks:

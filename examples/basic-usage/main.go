@@ -26,8 +26,14 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// Create Redis client
+	// Use environment variable for Redis address, default to localhost for local development
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+	
 	redisClient := redis.NewUniversalClient(&redis.UniversalOptions{
-		Addrs: []string{"localhost:6379"},
+		Addrs: []string{redisAddr},
 		DB:    0,
 	})
 	defer redisClient.Close()

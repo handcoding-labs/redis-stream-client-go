@@ -15,6 +15,7 @@ import (
 
 	"github.com/handcoding-labs/redis-stream-client-go/impl"
 	"github.com/handcoding-labs/redis-stream-client-go/notifs"
+	"github.com/handcoding-labs/redis-stream-client-go/types"
 )
 
 func main() {
@@ -47,8 +48,14 @@ func runConsumer() {
 	log.Printf("Starting consumer: %s", consumerID)
 
 	// Create Redis client
+	// Use environment variable for Redis address, default to localhost for local development
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+	
 	redisClient := redis.NewUniversalClient(&redis.UniversalOptions{
-		Addrs: []string{"localhost:6379"},
+		Addrs: []string{redisAddr},
 		DB:    0,
 	})
 	defer redisClient.Close()
@@ -121,8 +128,14 @@ func runProducer() {
 	log.Println("🏭 Starting producer...")
 
 	// Create Redis client
+	// Use environment variable for Redis address, default to localhost for local development
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+	
 	redisClient := redis.NewUniversalClient(&redis.UniversalOptions{
-		Addrs: []string{"localhost:6379"},
+		Addrs: []string{redisAddr},
 		DB:    0,
 	})
 	defer redisClient.Close()
@@ -140,12 +153,12 @@ func runProducer() {
 			lbsMessage := notifs.LBSMessage{
 				DataStreamName: fmt.Sprintf("order-stream-%d", messageID),
 				Info: map[string]interface{}{
-					"order_id":     fmt.Sprintf("order-%d", messageID),
-					"customer_id":  fmt.Sprintf("customer-%d", messageID%100),
-					"amount":       float64(messageID%1000 + 100),
-					"created_at":   time.Now().Format(time.RFC3339),
-					"status":       "pending",
-					"priority":     []string{"low", "normal", "high"}[messageID%3],
+					"order_id":    fmt.Sprintf("order-%d", messageID),
+					"customer_id": fmt.Sprintf("customer-%d", messageID%100),
+					"amount":      float64(messageID%1000 + 100),
+					"created_at":  time.Now().Format(time.RFC3339),
+					"status":      "pending",
+					"priority":    []string{"low", "normal", "high"}[messageID%3],
 				},
 			}
 
@@ -176,7 +189,7 @@ func runProducer() {
 	}
 }
 
-func handleStreamAdded(ctx context.Context, client *impl.RecoverableRedisStreamClient, payload string, processedStreams *sync.Map, streamCount *int32) {
+func handleStreamAdded(ctx context.Context, client types.RedisStreamClient, payload string, processedStreams *sync.Map, streamCount *int32) {
 	var lbsMessage notifs.LBSMessage
 	if err := json.Unmarshal([]byte(payload), &lbsMessage); err != nil {
 		log.Printf("❌ Failed to unmarshal LBS message: %v", err)
@@ -212,7 +225,7 @@ func handleStreamAdded(ctx context.Context, client *impl.RecoverableRedisStreamC
 	log.Printf("✅ [%s] Completed processing stream: %s (took %v)", consumerID, streamName, processingTime)
 }
 
-func handleClaimedStream(ctx context.Context, client *impl.RecoverableRedisStreamClient, payload string, processedStreams *sync.Map, streamCount *int32) {
+func handleClaimedStream(ctx context.Context, client types.RedisStreamClient, payload string, processedStreams *sync.Map, streamCount *int32) {
 	// Extract stream name from the payload (format: "stream_name:message_id")
 	// For this demo, we'll just log that we claimed it
 	log.Printf("🔄 [%s] Processing claimed stream: %s", client.ID(), payload)
