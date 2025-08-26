@@ -31,7 +31,7 @@ func main() {
 	if redisAddr == "" {
 		redisAddr = "localhost:6379"
 	}
-	
+
 	redisClient := redis.NewUniversalClient(&redis.UniversalOptions{
 		Addrs: []string{redisAddr},
 		DB:    0,

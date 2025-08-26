@@ -53,7 +53,7 @@ func runConsumer() {
 	if redisAddr == "" {
 		redisAddr = "localhost:6379"
 	}
-	
+
 	redisClient := redis.NewUniversalClient(&redis.UniversalOptions{
 		Addrs: []string{redisAddr},
 		DB:    0,
@@ -133,7 +133,7 @@ func runProducer() {
 	if redisAddr == "" {
 		redisAddr = "localhost:6379"
 	}
-	
+
 	redisClient := redis.NewUniversalClient(&redis.UniversalOptions{
 		Addrs: []string{redisAddr},
 		DB:    0,
