@@ -18,7 +18,7 @@ const (
 	PodIP                           = "POD_IP"
 	LBSInput                        = "lbs-input"
 	MutexKeySep                     = ":"
-	DefaultLBSIdleTime              = 10 * time.Minute
+	DefaultLBSIdleTime              = 20 * DefaultHBInterval
 	DefaultLBSRecoveryCount         = 1000
 	DefaultHBInterval               = 2 * time.Second
 )
