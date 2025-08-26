@@ -71,7 +71,7 @@ func TestLBS(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, opChan2)
 
-	addNStreamsToLBS(redisContainer, 2)
+	addNStreamsToLBS(t, redisContainer, 2)
 
 	// load balanced stream distributes messages to different consumers in a load balanced way
 	// so we keep track of which stream was given to consumer1 so that we can check if consumer2 gets another one
@@ -149,7 +149,7 @@ func TestLBSRecovery(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, opChan)
 
-	addNStreamsToLBS(redisContainer, 1)
+	addNStreamsToLBS(t, redisContainer, 1)
 
 	time.Sleep(1 * time.Second)
 
@@ -170,7 +170,8 @@ func TestLBSRecovery(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatalf("did not receive message after recovery")
 	}
-	_ = consumer.Done()
+	err = consumer.Done()
+	require.NoError(t, err)
 	_, ok := <-opChan
 	require.False(t, ok)
 }
@@ -199,7 +200,7 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, opChan2)
 
-	addNStreamsToLBS(redisContainer, 1)
+	addNStreamsToLBS(t, redisContainer, 1)
 
 	// create consumer3 client
 	consumer3 := createConsumer("333", redisContainer)
@@ -212,14 +213,17 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	cancelFunc()
 
 	// consumer2 and consumer3 try to claim at the same time
-	_ = consumer2.Claim(ctxWOCancel, "session0:0")
+	err = consumer2.Claim(ctxWOCancel, "session0:0")
+	require.NoError(t, err)
 	err = consumer3.Claim(ctxWOCancel, "session0:0")
 	require.Error(t, err)
 	require.Equal(t, err, fmt.Errorf("already claimed"))
 
 	// Done is not called on consumer1 as it's crashed
-	_ = consumer2.Done()
-	_ = consumer3.Done()
+	err = consumer2.Done()
+	require.NoError(t, err)
+	err = consumer3.Done()
+	require.NoError(t, err)
 }
 
 func TestBlockingRead(t *testing.T) {
@@ -240,7 +244,7 @@ func TestBlockingRead(t *testing.T) {
 	case <-time.After(500 * time.Millisecond):
 	}
 
-	addNStreamsToLBS(redisContainer, 1)
+	addNStreamsToLBS(t, redisContainer, 1)
 
 	var got bool
 	select {
@@ -252,7 +256,8 @@ func TestBlockingRead(t *testing.T) {
 	}
 
 	require.True(t, got)
-	_ = consumer.Done()
+	err = consumer.Done()
+	require.NoError(t, err)
 	_, ok := <-opChan
 	require.False(t, ok)
 }
@@ -325,7 +330,7 @@ func TestKspNotifsBulk(t *testing.T) {
 		cancelFuncs[i] = cancel
 	}
 
-	addNStreamsToLBS(redisContainer, totalStreams)
+	addNStreamsToLBS(t, redisContainer, totalStreams)
 
 	// start listening to kspChans and claim if we get a notification
 	for i, ch := range outputChans {
@@ -424,7 +429,7 @@ func TestMainFlow(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, opChan2)
 
-	addNStreamsToLBS(redisContainer, 2)
+	addNStreamsToLBS(t, redisContainer, 2)
 
 	simpleRedisClient := newRedisClient(redisContainer)
 
@@ -559,7 +564,8 @@ func TestMainFlow(t *testing.T) {
 	require.Less(t, i, 10)
 
 	require.True(t, gotNotification)
-	_ = consumer2.Done()
+	err = consumer2.Done()
+	require.NoError(t, err)
 	// no Done is called on consumer1 because it crashed
 	// either Done is called or context is canceled
 
@@ -574,7 +580,7 @@ func TestMainFlow(t *testing.T) {
 	require.False(t, ok)
 }
 
-func addNStreamsToLBS(redisContainer *redis.RedisContainer, n int) {
+func addNStreamsToLBS(t *testing.T, redisContainer *redis.RedisContainer, n int) {
 	stringify := func(name string, i int) string {
 		return fmt.Sprintf("%s%d", name, i)
 	}
@@ -583,19 +589,21 @@ func addNStreamsToLBS(redisContainer *redis.RedisContainer, n int) {
 	defer producer.Close()
 
 	for i := 0; i < n; i++ {
-		lbsMsg, _ := json.Marshal(notifs.LBSMessage{
+		lbsMsg, err := json.Marshal(notifs.LBSMessage{
 			DataStreamName: stringify("session", i),
 			Info: map[string]interface{}{
 				stringify("key", i): stringify("value", i),
 			},
 		})
+		require.NoError(t, err)
 
-		_, _ = producer.XAdd(context.Background(), &redisgo.XAddArgs{
+		_, err = producer.XAdd(context.Background(), &redisgo.XAddArgs{
 			Stream: "consumer-input",
 			Values: map[string]any{
 				configs.LBSInput: string(lbsMsg),
 			},
 		}).Result()
+		require.NoError(t, err, "failed to add stream %d", i)
 	}
 }
 
