@@ -14,10 +14,10 @@ func WithLBSIdleTime(idleTime time.Duration) RecoverableRedisOption {
 		// idleTime must be greater than 2 * heartbeat interval at least
 		if idleTime != 0 && idleTime > (2*r.hbInterval) {
 			r.lbsIdleTime = idleTime
+		} else {
+			// if the value is not valid, set it to the default
+			r.lbsIdleTime = configs.DefaultLBSIdleTime
 		}
-
-		// if the value is not valid, set it to the default
-		r.lbsIdleTime = configs.DefaultLBSIdleTime
 	}
 }
 
