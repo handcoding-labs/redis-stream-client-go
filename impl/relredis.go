@@ -13,6 +13,7 @@ import (
 	"github.com/go-redsync/redsync/v4/redis/goredis/v9"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/handcoding-labs/redis-stream-client-go/configs"
 	"github.com/handcoding-labs/redis-stream-client-go/notifs"
 	"github.com/handcoding-labs/redis-stream-client-go/types"
 )
@@ -53,8 +54,8 @@ type RecoverableRedisStreamClient struct {
 // Stream is the name of the stream to read from where actual data is transmitted
 func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string, opts ...RecoverableRedisOption) types.RedisStreamClient {
 	// obtain consumer name via kubernetes downward api
-	podName := os.Getenv(types.PodName)
-	podIP := os.Getenv(types.PodIP)
+	podName := os.Getenv(configs.PodName)
+	podIP := os.Getenv(configs.PodIP)
 
 	if podName == "" && podIP == "" {
 		panic("POD_NAME or POD_IP not set")
@@ -63,16 +64,10 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string,
 	var consumerID string
 
 	if len(podName) > 0 {
-		consumerID = types.RedisConsumerPrefix + podName
+		consumerID = configs.RedisConsumerPrefix + podName
 	} else {
-		consumerID = types.RedisConsumerPrefix + podIP
+		consumerID = configs.RedisConsumerPrefix + podIP
 	}
-
-	// Based on experiements we use a default heartbeat of 2 seconds because when we get a distributed lock
-	// we extend key every heartbeatInterval / 2 times so that means we send heartbeat every second
-	// Simillarly, when claiming a stale stream, we wait for 1 heartbeat interval duration which means the key
-	// extension failed two consecutive times
-	defaultHBInterval := 2 * time.Second
 
 	pool := goredis.NewPool(redisClient)
 	rs := redsync.New(pool)
@@ -81,12 +76,14 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string,
 		redisClient:      redisClient,
 		consumerID:       consumerID,
 		kspChan:          make(chan *redis.Message, 500),
-		hbInterval:       defaultHBInterval,
+		hbInterval:       configs.DefaultHBInterval,
 		streamLocks:      make(map[string]*lbsInfo),
 		serviceName:      serviceName,
 		outputChan:       make(chan notifs.RecoverableRedisNotification[any], 500),
 		outputChanClosed: atomic.Bool{},
 		rs:               rs,
+		lbsIdleTime:      configs.DefaultLBSIdleTime,
+		lbsRecoveryCount: configs.DefaultLBSRecoveryCount,
 	}
 
 	for _, opt := range opts {
@@ -117,7 +114,7 @@ func (r *RecoverableRedisStreamClient) Init(ctx context.Context) (<-chan notifs.
 	r.lbsCtxCancelFunc = cancelFunc
 
 	// create group
-	res := r.redisClient.XGroupCreateMkStream(ctx, r.lbsName(), r.lbsGroupName(), types.StartFromNow)
+	res := r.redisClient.XGroupCreateMkStream(ctx, r.lbsName(), r.lbsGroupName(), configs.StartFromNow)
 	if res.Err() != nil && !strings.Contains(res.Err().Error(), "BUSYGROUP") {
 		return nil, res.Err()
 	}

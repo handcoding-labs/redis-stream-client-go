@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/handcoding-labs/redis-stream-client-go/types"
+	"github.com/handcoding-labs/redis-stream-client-go/configs"
 
 	"github.com/go-redsync/redsync/v4"
 )
@@ -17,11 +17,11 @@ type lbsInfo struct {
 }
 
 func (l *lbsInfo) getMutexKey() string {
-	return strings.Join([]string{l.DataStreamName, l.IDInLBS}, types.MutexKeySep)
+	return strings.Join([]string{l.DataStreamName, l.IDInLBS}, configs.MutexKeySep)
 }
 
 func createByMutexKey(mutexKey string) (*lbsInfo, error) {
-	parts := strings.Split(mutexKey, types.MutexKeySep)
+	parts := strings.Split(mutexKey, configs.MutexKeySep)
 	// must be in format: data_stream_name:message_id_in_lbs
 	if len(parts) == 1 || len(parts) > 2 {
 		return nil, fmt.Errorf("invalid mutex key format: %s", mutexKey)

@@ -1,4 +1,6 @@
-package types
+package configs
+
+import "time"
 
 const (
 	GroupSuffix                     = "-group"
@@ -16,5 +18,7 @@ const (
 	PodIP                           = "POD_IP"
 	LBSInput                        = "lbs-input"
 	MutexKeySep                     = ":"
-	LockAlreadyTakenErrMsg          = "lock already taken"
+	DefaultLBSIdleTime              = 10 * time.Minute
+	DefaultLBSRecoveryCount         = 1000
+	DefaultHBInterval               = 2 * time.Second
 )
