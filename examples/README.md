@@ -1,6 +1,6 @@
 # Redis Stream Client Go - Examples
 
-This directory contains practical examples demonstrating how to use the Redis Stream Client Go library in various scenarios.
+This directory contains practical examples demonstrating how to use the Redis Stream Client Go library in various scenarios. These are demo only.
 
 ## Examples Overview
 
