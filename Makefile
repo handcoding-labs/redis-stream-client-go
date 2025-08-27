@@ -120,15 +120,19 @@ deps-vendor:
 	@echo "Creating vendor directory..."
 	$(GOMOD) vendor
 
-## security: Run security checks (requires gosec)
+## security: Run security and vulnerability checks
 security:
 	@echo "Running security checks..."
-	@if command -v gosec >/dev/null 2>&1; then \
-		gosec ./...; \
+	@echo "Running Go vulnerability check..."
+	@if command -v govulncheck >/dev/null 2>&1; then \
+		govulncheck ./...; \
 	else \
-		echo "gosec not installed. Security scanning skipped."; \
-		echo "Install gosec manually if needed for security scanning."; \
+		echo "Installing govulncheck..."; \
+		go install golang.org/x/vuln/cmd/govulncheck@latest; \
+		govulncheck ./...; \
 	fi
+	@echo "Running basic security check with go vet..."
+	$(GOCMD) vet ./...
 
 ## docker-build: Build Docker image
 docker-build:
@@ -157,8 +161,8 @@ install-tools:
 	@echo "Installing development tools..."
 	@echo "Installing golangci-lint..."
 	@curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin v1.54.2
-	@echo "Installing gosec..."
-	@echo "Note: gosec installation skipped - install manually if needed"
+	@echo "Installing govulncheck..."
+	@go install golang.org/x/vuln/cmd/govulncheck@latest
 	@echo "Installing goimports..."
 	@go install golang.org/x/tools/cmd/goimports@latest
 

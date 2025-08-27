@@ -93,8 +93,11 @@ jobs:
         with:
           go-version: '1.23'
 
-      - name: Run Nancy vulnerability scanner
-        uses: sonatypecommunity/nancy-github-action@main
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run Go vulnerability check
+        run: govulncheck ./...
 
   # Build and test matrix
   test:
