@@ -213,7 +213,7 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 
 	// kill consumer1
 	cancelFunc()
-	time.Sleep(1 * time.Second)
+	time.Sleep(3 * time.Second)
 
 	// consumer2 and consumer3 try to claim at the same time
 	err = consumer2.Claim(ctxWOCancel, "session0:0")
