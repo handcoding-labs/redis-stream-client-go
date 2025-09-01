@@ -105,9 +105,14 @@ func (r *RecoverableRedisStreamClient) ID() string {
 // Returns a channel to read messages from the LBS stream. The client should read from this channel and process the messages.
 // Returns a channel to read keyspace notifications. The client should read from this channel and process the notifications.
 func (r *RecoverableRedisStreamClient) Init(ctx context.Context) (<-chan notifs.RecoverableRedisNotification[any], error) {
-	if r.checkErr(ctx, r.enableKeyspaceNotifsForExpiredEvents).
-		checkErr(ctx, r.subscribeToExpiredEvents) == nil {
-		return nil, fmt.Errorf("error initializing the client")
+	keyspaceErr := r.enableKeyspaceNotifsForExpiredEvents(ctx)
+	if keyspaceErr != nil {
+		return nil, keyspaceErr
+	}
+
+	expiredErr := r.subscribeToExpiredEvents(ctx)
+	if expiredErr != nil {
+		return nil, expiredErr
 	}
 
 	lbsCtx, cancelFunc := context.WithCancel(ctx)
