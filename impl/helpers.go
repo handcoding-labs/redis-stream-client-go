@@ -14,7 +14,10 @@ func (r *RecoverableRedisStreamClient) lbsName() string {
 	return r.serviceName + configs.InputSuffix
 }
 
-func (r *RecoverableRedisStreamClient) checkErr(ctx context.Context, fn func(context.Context) error) *RecoverableRedisStreamClient {
+func (r *RecoverableRedisStreamClient) checkErr(
+	ctx context.Context,
+	fn func(context.Context) error,
+) *RecoverableRedisStreamClient {
 	if r == nil {
 		return nil
 	}

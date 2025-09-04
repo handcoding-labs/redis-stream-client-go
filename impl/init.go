@@ -28,7 +28,10 @@ func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx 
 
 func (r *RecoverableRedisStreamClient) subscribeToExpiredEvents(ctx context.Context) error {
 	r.pubSub = r.redisClient.PSubscribe(ctx, configs.ExpiredEventPattern)
-	r.kspChan = r.pubSub.Channel(redis.WithChannelHealthCheckInterval(1*time.Second), redis.WithChannelSendTimeout(10*time.Minute))
+	r.kspChan = r.pubSub.Channel(
+		redis.WithChannelHealthCheckInterval(1*time.Second),
+		redis.WithChannelSendTimeout(10*time.Minute),
+	)
 	return nil
 }
 
@@ -102,11 +105,14 @@ func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
 			log.Fatal("fatal error while reading lbs: ", err, "exiting...")
 			return
 		}
-
 	}
 }
 
-func (r *RecoverableRedisStreamClient) processLBSMessages(ctx context.Context, streams []redis.XStream, rs *redsync.Redsync) error {
+func (r *RecoverableRedisStreamClient) processLBSMessages(
+	ctx context.Context,
+	streams []redis.XStream,
+	rs *redsync.Redsync,
+) error {
 	for _, stream := range streams {
 		for _, message := range stream.Messages {
 			// has to be an LBS message
@@ -152,14 +158,22 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(ctx context.Context, s
 			r.outputChan <- notifs.Make(v, notifs.StreamAdded)
 
 			// now, keep extending the lock in a separate go routine
-			go r.startExtendingKey(ctx, mutex, lbsInfo.DataStreamName)
+			go func() {
+				if err := r.startExtendingKey(ctx, mutex, lbsInfo.DataStreamName); err != nil {
+					log.Printf("Error extending key: %v", err)
+				}
+			}()
 		}
 	}
 
 	return nil
 }
 
-func (r *RecoverableRedisStreamClient) startExtendingKey(ctx context.Context, mutex *redsync.Mutex, streamName string) error {
+func (r *RecoverableRedisStreamClient) startExtendingKey(
+	ctx context.Context,
+	mutex *redsync.Mutex,
+	streamName string,
+) error {
 	extensionFailed := false
 	defer func() {
 		if extensionFailed && !r.outputChanClosed.Load() {
@@ -170,6 +184,7 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(ctx context.Context, mu
 
 	for {
 		if r.isContextDone(ctx) {
+			log.Println("context done, exiting", r.consumerID)
 			return nil
 		}
 
@@ -182,8 +197,27 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(ctx context.Context, mu
 	}
 }
 
-func (r *RecoverableRedisStreamClient) listenKsp() {
-	for kspNotif := range r.kspChan {
-		r.outputChan <- notifs.Make(kspNotif.Payload, notifs.StreamExpired)
+func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("context done, exiting", r.consumerID)
+			return
+		case kspNotif := <-r.kspChan:
+			if kspNotif != nil {
+				log.Println("ksp notif received", r.consumerID, kspNotif.Payload)
+				r.outputChan <- notifs.Make(kspNotif.Payload, notifs.StreamExpired)
+			}
+		case <-ticker.C:
+			// check if the channel is closed,
+			// this means that the client has called Done and is no longer interested in expired notifications
+			if r.outputChanClosed.Load() {
+				log.Println("output channel closed, exiting", r.consumerID)
+				return
+			}
+		}
 	}
 }
