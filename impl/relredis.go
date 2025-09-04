@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -26,7 +27,7 @@ type RecoverableRedisStreamClient struct {
 	consumerID string
 	// kspChan is the channel to read keyspace notifications
 	kspChan <-chan *redis.Message
-	// lbsCtxCancelFunc is used to control when to kill go routines spwaned as part of lbs
+	// lbsCtxCancelFunc is used to control when to kill go routines spawned as part of lbs
 	lbsCtxCancelFunc context.CancelFunc
 	// hbInterval is the interval at which the client sends heartbeats
 	hbInterval time.Duration
@@ -52,7 +53,11 @@ type RecoverableRedisStreamClient struct {
 //
 // This function creates a new RedisStreamClient with the given redis client and stream name
 // Stream is the name of the stream to read from where actual data is transmitted
-func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string, opts ...RecoverableRedisOption) types.RedisStreamClient {
+func NewRedisStreamClient(
+	redisClient redis.UniversalClient,
+	serviceName string,
+	opts ...RecoverableRedisOption,
+) types.RedisStreamClient {
 	// obtain consumer name via kubernetes downward api
 	podName := os.Getenv(configs.PodName)
 	podIP := os.Getenv(configs.PodIP)
@@ -87,7 +92,9 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string,
 	}
 
 	for _, opt := range opts {
-		opt(r)
+		if err := opt(r); err != nil {
+			panic(fmt.Sprintf("invalid option: %v", err))
+		}
 	}
 
 	return r
@@ -102,15 +109,19 @@ func (r *RecoverableRedisStreamClient) ID() string {
 //
 // This function initializes the RedisStreamClient by enabling keyspace notifications for expired events,
 // subscribing to expired events, and starting a blocking read on the LBS stream
-// Returns a channel to read messages from the LBS stream. The client should read from this channel and process the messages.
-// Returns a channel to read keyspace notifications. The client should read from this channel and process the notifications.
-func (r *RecoverableRedisStreamClient) Init(ctx context.Context) (<-chan notifs.RecoverableRedisNotification[any], error) {
+// Returns a channel to read messages from the LBS stream. The client should read from this
+// channel and process the messages.
+// Returns a channel to read keyspace notifications. The client should read from this channel
+// and process the notifications.
+func (r *RecoverableRedisStreamClient) Init(
+	ctx context.Context,
+) (<-chan notifs.RecoverableRedisNotification[any], error) {
 	if r.checkErr(ctx, r.enableKeyspaceNotifsForExpiredEvents).
 		checkErr(ctx, r.subscribeToExpiredEvents) == nil {
 		return nil, fmt.Errorf("error initializing the client")
 	}
 
-	lbsCtx, cancelFunc := context.WithCancel(ctx)
+	newCtx, cancelFunc := context.WithCancel(ctx)
 	r.lbsCtxCancelFunc = cancelFunc
 
 	// create group
@@ -120,19 +131,21 @@ func (r *RecoverableRedisStreamClient) Init(ctx context.Context) (<-chan notifs.
 	}
 
 	// recovery of unacked LBS messages
-	r.recoverUnackedLBS(lbsCtx)
+	r.recoverUnackedLBS(newCtx)
 
 	// start blocking read on LBS stream
-	go r.readLBSStream(lbsCtx)
+	go r.readLBSStream(newCtx)
 
 	// listen to ksp chan
-	go r.listenKsp()
+	go r.listenKsp(newCtx)
 
 	return r.outputChan, nil
 }
 
 // Claim claims pending messages from a stream
 func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, mutexKey string) error {
+	log.Println("claiming", r.consumerID, mutexKey, time.Now().Format(time.RFC3339))
+
 	lbsInfo, err := createByMutexKey(mutexKey)
 	if err != nil {
 		return err
@@ -143,16 +156,18 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, mutexKey strin
 		Stream:   r.lbsName(),
 		Group:    r.lbsGroupName(),
 		Consumer: r.consumerID,
-		MinIdle:  r.hbInterval, // one heartbeat interval has elapsed
+		MinIdle:  r.hbInterval, // one heartbeat interval must have elapsed
 		Messages: []string{lbsInfo.IDInLBS},
 	})
 
 	if res.Err() != nil {
+		log.Println("error claiming", res.Err())
 		return res.Err()
 	}
 
 	claimed, err := res.Result()
 	if err != nil {
+		log.Println("error getting claimed", r.consumerID, mutexKey, err)
 		return err
 	}
 
@@ -174,7 +189,11 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, mutexKey strin
 		return err
 	}
 
-	go r.startExtendingKey(ctx, mutex, lbsInfo.DataStreamName)
+	go func() {
+		if err := r.startExtendingKey(ctx, mutex, lbsInfo.DataStreamName); err != nil {
+			log.Printf("Error extending key: %v", err)
+		}
+	}()
 
 	// seed the mutex
 	lbsInfo.Mutex = mutex
