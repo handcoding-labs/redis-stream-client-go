@@ -213,12 +213,37 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 
 	// kill consumer1
 	cancelFunc()
+
+	// print out who the xinfo for stream
+	xinfoRes := redisClient.XInfoStreamFull(ctxWOCancel, "consumer-input", 1)
+	require.NoError(t, xinfoRes.Err())
+	streamRes := xinfoRes.Val()
+	require.NotNil(t, streamRes)
+	require.Len(t, streamRes.Groups, 1)
+	grp := streamRes.Groups[0]
+	for _, c := range grp.Consumers {
+		log.Println("consumer: ", c.Name, c.PelCount, c.Pending)
+		for _, m := range c.Pending {
+			log.Println("message: ", m.ID, m.DeliveryTime)
+		}
+	}
+
 	time.Sleep(3 * time.Second)
 
 	// consumer2 and consumer3 try to claim at the same time
-	err = consumer2.Claim(ctxWOCancel, "session0:0")
+	// Get the actual message ID from the pending messages
+	var actualMutexKey string
+	for _, c := range grp.Consumers {
+		if c.Name == "redis-consumer-111" && len(c.Pending) > 0 {
+			actualMutexKey = fmt.Sprintf("session0:%s", c.Pending[0].ID)
+			break
+		}
+	}
+	require.NotEmpty(t, actualMutexKey, "Could not find pending message for consumer1")
+
+	err = consumer2.Claim(ctxWOCancel, actualMutexKey)
 	require.NoError(t, err)
-	err = consumer3.Claim(ctxWOCancel, "session0:0")
+	err = consumer3.Claim(ctxWOCancel, actualMutexKey)
 	require.Error(t, err)
 	require.Equal(t, err, fmt.Errorf("already claimed"))
 

@@ -184,6 +184,7 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 
 	for {
 		if r.isContextDone(ctx) {
+			log.Println("context done, exiting", r.consumerID)
 			return nil
 		}
 
@@ -196,8 +197,26 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 	}
 }
 
-func (r *RecoverableRedisStreamClient) listenKsp() {
-	for kspNotif := range r.kspChan {
-		r.outputChan <- notifs.Make(kspNotif.Payload, notifs.StreamExpired)
+func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("context done, exiting", r.consumerID)
+			return
+		case kspNotif := <-r.kspChan:
+			if kspNotif != nil {
+				log.Println("ksp notif received", r.consumerID, kspNotif.Payload)
+				r.outputChan <- notifs.Make(kspNotif.Payload, notifs.StreamExpired)
+			}
+		case <-ticker.C:
+			// check if the channel is closed, this means that the client has called Done and is no longer interested in expired notifications
+			if r.outputChanClosed.Load() {
+				log.Println("output channel closed, exiting", r.consumerID)
+				return
+			}
+		}
 	}
 }

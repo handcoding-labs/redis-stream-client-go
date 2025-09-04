@@ -121,7 +121,7 @@ func (r *RecoverableRedisStreamClient) Init(
 		return nil, fmt.Errorf("error initializing the client")
 	}
 
-	lbsCtx, cancelFunc := context.WithCancel(ctx)
+	newCtx, cancelFunc := context.WithCancel(ctx)
 	r.lbsCtxCancelFunc = cancelFunc
 
 	// create group
@@ -131,19 +131,21 @@ func (r *RecoverableRedisStreamClient) Init(
 	}
 
 	// recovery of unacked LBS messages
-	r.recoverUnackedLBS(lbsCtx)
+	r.recoverUnackedLBS(newCtx)
 
 	// start blocking read on LBS stream
-	go r.readLBSStream(lbsCtx)
+	go r.readLBSStream(newCtx)
 
 	// listen to ksp chan
-	go r.listenKsp()
+	go r.listenKsp(newCtx)
 
 	return r.outputChan, nil
 }
 
 // Claim claims pending messages from a stream
 func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, mutexKey string) error {
+	log.Println("claiming", r.consumerID, mutexKey, time.Now().Format(time.RFC3339))
+
 	lbsInfo, err := createByMutexKey(mutexKey)
 	if err != nil {
 		return err
@@ -154,16 +156,18 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, mutexKey strin
 		Stream:   r.lbsName(),
 		Group:    r.lbsGroupName(),
 		Consumer: r.consumerID,
-		MinIdle:  r.hbInterval, // one heartbeat interval has elapsed
+		MinIdle:  r.hbInterval, // one heartbeat interval must have elapsed
 		Messages: []string{lbsInfo.IDInLBS},
 	})
 
 	if res.Err() != nil {
+		log.Println("error claiming", res.Err())
 		return res.Err()
 	}
 
 	claimed, err := res.Result()
 	if err != nil {
+		log.Println("error getting claimed", r.consumerID, mutexKey, err)
 		return err
 	}
 
