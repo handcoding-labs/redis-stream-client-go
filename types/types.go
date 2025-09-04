@@ -25,6 +25,10 @@ type RedisStreamClient interface {
 	Claim(ctx context.Context, kspNotification string) error
 	// Done marks the end of processing the stream
 	//
-	// should be called when consumer is done processing the data stream.
+	// should be called when consumer is shutting down and is not expected to be called again.
 	Done() error
+	// DoneStream marks end of processing for a particular stream
+	//
+	// should be called when consumer is done processing a particular data stream.
+	DoneStream(ctx context.Context, dataStreamName string) error
 }
