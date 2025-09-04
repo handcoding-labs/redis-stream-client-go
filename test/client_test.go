@@ -230,7 +230,7 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	time.Sleep(3 * time.Second)
 
 	// consumer2 and consumer3 try to claim at the same time
-	// Get the actual message ID from the pending messages
+	// Get the actual message ID from the pending messages to claim
 	var actualMutexKey string
 	for _, c := range grp.Consumers {
 		if c.Name == "redis-consumer-111" && len(c.Pending) > 0 {
