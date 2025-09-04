@@ -212,7 +212,8 @@ func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
 				r.outputChan <- notifs.Make(kspNotif.Payload, notifs.StreamExpired)
 			}
 		case <-ticker.C:
-			// check if the channel is closed, this means that the client has called Done and is no longer interested in expired notifications
+			// check if the channel is closed,
+			// this means that the client has called Done and is no longer interested in expired notifications
 			if r.outputChanClosed.Load() {
 				log.Println("output channel closed, exiting", r.consumerID)
 				return
