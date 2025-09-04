@@ -30,7 +30,7 @@ func (r *RecoverableRedisStreamClient) subscribeToExpiredEvents(ctx context.Cont
 	r.pubSub = r.redisClient.PSubscribe(ctx, configs.ExpiredEventPattern)
 	r.kspChan = r.pubSub.Channel(
 		redis.WithChannelHealthCheckInterval(1*time.Second),
-		redis.WithChannelSendTimeout(10*time.Minute)
+		redis.WithChannelSendTimeout(10*time.Minute),
 	)
 	return nil
 }
