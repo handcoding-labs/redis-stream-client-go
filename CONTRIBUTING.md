@@ -164,7 +164,7 @@ go test -bench=. ./...
    // Example:
    //   err := client.Claim(ctx, "session0:1234567890-0")
    //   if err != nil {
-   //       log.Printf("Failed to claim stream: %v", err)
+   //       slog.Error("Failed to claim stream", "error", err)
    //   }
    func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, kspNotification string) error {
    ```

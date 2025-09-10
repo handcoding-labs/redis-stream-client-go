@@ -80,7 +80,8 @@ client := impl.NewRedisStreamClient(redisClient, "my-service")
 ```go
 outputChan, err := client.Init(ctx)
 if err != nil {
-    log.Fatal(err)
+    slog.Error("Failed to initialize client", "error", err)
+    os.Exit(1)
 }
 ```
 
@@ -155,10 +156,12 @@ To test load balancing and failure recovery:
 Enable debug logging in examples:
 
 ```go
-import "log"
+import "log/slog"
 
 // Add at the beginning of main()
-log.SetFlags(log.LstdFlags | log.Lshortfile)
+slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+    Level: slog.LevelDebug,
+})))
 ```
 
 ## Contributing
