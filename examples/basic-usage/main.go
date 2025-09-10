@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -40,25 +40,28 @@ func main() {
 
 	// Test Redis connection
 	if err := redisClient.Ping(ctx).Err(); err != nil {
-		log.Fatalf("Failed to connect to Redis: %v", err)
+		slog.Error("Failed to connect to Redis", "error", err)
+		os.Exit(1)
 	}
-	log.Println("Connected to Redis successfully")
+	slog.Info("Connected to Redis successfully")
 
 	// Enable keyspace notifications for expired events
 	if err := redisClient.ConfigSet(ctx, "notify-keyspace-events", "Ex").Err(); err != nil {
-		log.Fatalf("Failed to enable keyspace notifications: %v", err)
+		slog.Error("Failed to enable keyspace notifications", "error", err)
+		os.Exit(1)
 	}
 
 	// Create Redis Stream Client
 	client := impl.NewRedisStreamClient(redisClient, "basic-example")
-	log.Printf("Created client with ID: %s", client.ID())
+	slog.Info("Created client", "client_id", client.ID())
 
 	// Initialize the client
 	outputChan, err := client.Init(ctx)
 	if err != nil {
-		log.Fatalf("Failed to initialize client: %v", err)
+		slog.Error("Failed to initialize client", "error", err)
+		os.Exit(1)
 	}
-	log.Println("Client initialized successfully")
+	slog.Info("Client initialized successfully")
 
 	// Start a goroutine to add some test data
 	go addTestData(ctx, redisClient)
@@ -68,40 +71,40 @@ func main() {
 		for notification := range outputChan {
 			switch notification.Type {
 			case notifs.StreamAdded:
-				log.Printf("🎉 New stream added: %v", notification.Payload)
+				slog.Info("🎉 New stream added", "payload", notification.Payload)
 				handleStreamAdded(ctx, notification.Payload.(string))
 
 			case notifs.StreamExpired:
-				log.Printf("⚠️  Stream expired: %v", notification.Payload)
+				slog.Warn("⚠️  Stream expired", "payload", notification.Payload)
 				if err := client.Claim(ctx, notification.Payload.(string)); err != nil {
-					log.Printf("Failed to claim expired stream: %v", err)
+					slog.Error("Failed to claim expired stream", "error", err)
 				} else {
-					log.Printf("✅ Successfully claimed expired stream")
+					slog.Info("✅ Successfully claimed expired stream")
 				}
 
 			case notifs.StreamDisowned:
-				log.Printf("❌ Stream disowned: %v", notification.Payload)
+				slog.Warn("❌ Stream disowned", "payload", notification.Payload)
 				// Handle losing ownership of a stream
 				handleStreamDisowned(notification.Payload.(string))
 
 			default:
-				log.Printf("Unknown notification type: %v", notification.Type)
+				slog.Warn("Unknown notification type", "type", notification.Type)
 			}
 		}
 	}()
 
 	// Wait for shutdown signal
 	<-sigChan
-	log.Println("Shutdown signal received, cleaning up...")
+	slog.Info("Shutdown signal received, cleaning up...")
 
 	// Graceful shutdown
 	if err := client.Done(); err != nil {
-		log.Printf("Error during cleanup: %v", err)
+		slog.Error("Error during cleanup", "error", err)
 	} else {
-		log.Println("Client cleanup completed successfully")
+		slog.Info("Client cleanup completed successfully")
 	}
 
-	log.Println("Example completed")
+	slog.Info("Example completed")
 }
 
 // addTestData adds some test streams to the Load Balancer Stream (LBS)
@@ -109,7 +112,7 @@ func addTestData(ctx context.Context, redisClient redis.UniversalClient) {
 	// Wait a bit for the client to be ready
 	time.Sleep(2 * time.Second)
 
-	log.Println("Adding test data to LBS...")
+	slog.Info("Adding test data to LBS...")
 
 	for i := 0; i < 3; i++ {
 		// Create a test message for the LBS
@@ -126,7 +129,7 @@ func addTestData(ctx context.Context, redisClient redis.UniversalClient) {
 		// Marshal to JSON
 		messageData, err := json.Marshal(lbsMessage)
 		if err != nil {
-			log.Printf("Failed to marshal LBS message: %v", err)
+			slog.Error("Failed to marshal LBS message", "error", err)
 			continue
 		}
 
@@ -139,9 +142,9 @@ func addTestData(ctx context.Context, redisClient redis.UniversalClient) {
 		})
 
 		if result.Err() != nil {
-			log.Printf("Failed to add message to LBS: %v", result.Err())
+			slog.Error("Failed to add message to LBS", "error", result.Err())
 		} else {
-			log.Printf("Added test message %d to LBS: %s", i, result.Val())
+			slog.Info("Added test message to LBS", "message_id", i, "stream_id", result.Val())
 		}
 
 		// Wait between messages
@@ -153,12 +156,11 @@ func addTestData(ctx context.Context, redisClient redis.UniversalClient) {
 func handleStreamAdded(ctx context.Context, payload string) {
 	var lbsMessage notifs.LBSMessage
 	if err := json.Unmarshal([]byte(payload), &lbsMessage); err != nil {
-		log.Printf("Failed to unmarshal LBS message: %v", err)
+		slog.Error("Failed to unmarshal LBS message", "error", err)
 		return
 	}
 
-	log.Printf("Processing stream: %s", lbsMessage.DataStreamName)
-	log.Printf("Stream info: %+v", lbsMessage.Info)
+	slog.Info("Processing stream", "stream_name", lbsMessage.DataStreamName, "stream_info", lbsMessage.Info)
 
 	// Simulate processing the data stream
 	// In a real application, you would:
@@ -167,12 +169,12 @@ func handleStreamAdded(ctx context.Context, payload string) {
 	// 3. Acknowledge processed messages
 	// 4. Call client.DoneStream() when finished with this stream
 
-	log.Printf("✅ Finished processing stream: %s", lbsMessage.DataStreamName)
+	slog.Info("✅ Finished processing stream", "stream_name", lbsMessage.DataStreamName)
 }
 
 // handleStreamDisowned handles losing ownership of a stream
 func handleStreamDisowned(payload string) {
-	log.Printf("Lost ownership of stream, stopping processing: %s", payload)
+	slog.Info("Lost ownership of stream, stopping processing", "payload", payload)
 	// In a real application, you would:
 	// 1. Stop processing the stream
 	// 2. Clean up any resources

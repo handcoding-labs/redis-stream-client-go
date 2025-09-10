@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -144,7 +144,7 @@ func (r *RecoverableRedisStreamClient) Init(
 
 // Claim claims pending messages from a stream
 func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, mutexKey string) error {
-	log.Println("claiming", r.consumerID, mutexKey, time.Now().Format(time.RFC3339))
+	slog.Info("claiming stream", "consumer_id", r.consumerID, "mutex_key", mutexKey, "timestamp", time.Now().Format(time.RFC3339))
 
 	lbsInfo, err := createByMutexKey(mutexKey)
 	if err != nil {
@@ -161,13 +161,13 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, mutexKey strin
 	})
 
 	if res.Err() != nil {
-		log.Println("error claiming", res.Err())
+		slog.Error("error claiming stream", "error", res.Err(), "consumer_id", r.consumerID)
 		return res.Err()
 	}
 
 	claimed, err := res.Result()
 	if err != nil {
-		log.Println("error getting claimed", r.consumerID, mutexKey, err)
+		slog.Error("error getting claimed stream", "error", err, "consumer_id", r.consumerID, "mutex_key", mutexKey)
 		return err
 	}
 
@@ -191,7 +191,7 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, mutexKey strin
 
 	go func() {
 		if err := r.startExtendingKey(ctx, mutex, lbsInfo.DataStreamName); err != nil {
-			log.Printf("Error extending key: %v", err)
+			slog.Error("Error extending key", "error", err, "stream", lbsInfo.DataStreamName, "consumer_id", r.consumerID)
 		}
 	}()
 

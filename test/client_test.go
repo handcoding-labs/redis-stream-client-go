@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -79,7 +79,7 @@ func TestLBS(t *testing.T) {
 	var expectedMsgConsumer1 string
 
 	for i := 0; i < 2; i++ {
-		log.Println("iteration: ", i)
+		slog.Debug("iteration", "i", i)
 		select {
 		case msg, ok := <-opChan1:
 			switch msg.Type {
@@ -222,9 +222,9 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	require.Len(t, streamRes.Groups, 1)
 	grp := streamRes.Groups[0]
 	for _, c := range grp.Consumers {
-		log.Println("consumer: ", c.Name, c.PelCount, c.Pending)
+		slog.Debug("consumer info", "name", c.Name, "pel_count", c.PelCount, "pending_count", len(c.Pending))
 		for _, m := range c.Pending {
-			log.Println("message: ", m.ID, m.DeliveryTime)
+			slog.Debug("pending message", "id", m.ID, "delivery_time", m.DeliveryTime)
 		}
 	}
 
@@ -376,7 +376,7 @@ func TestKspNotifsBulk(t *testing.T) {
 	totalExpected := int64(totalStreams)
 	done := false
 
-	log.Println("start checking ", time.Now())
+	slog.Debug("start checking", "time", time.Now())
 	for {
 		if done {
 			break
@@ -404,7 +404,7 @@ func TestKspNotifsBulk(t *testing.T) {
 		time.Sleep(time.Second)
 	}
 
-	log.Println("check complete", time.Now())
+	slog.Debug("check complete", "time", time.Now())
 
 	totalActual := int64(0)
 
@@ -516,7 +516,7 @@ func TestMainFlow(t *testing.T) {
 	require.True(t, readingSuccess)
 
 	// kill consumer1
-	log.Println("killing consumer1")
+	slog.Debug("killing consumer1")
 	consumer1CancelFunc()
 	consumer1Crashed = true
 
@@ -535,7 +535,7 @@ func TestMainFlow(t *testing.T) {
 	i = 0
 	streamsPickedup = 0
 	for {
-		log.Println("iteration ", i)
+		slog.Debug("iteration", "i", i)
 
 		if i == 10 || claimSuccess {
 			break
