@@ -46,7 +46,7 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
 	})
 
 	if xpendingCmdRes.Err() != nil {
-		log.Fatal("error while getting unacked messages: ", xpendingCmdRes.Err())
+		log.Println("error while getting unacked messages: ", xpendingCmdRes.Err())
 		return
 	}
 
@@ -60,7 +60,7 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
 
 	xrangeCmdRes := r.redisClient.XRange(ctx, r.lbsName(), xpendingInfo[0].ID, xpendingInfo[len(xpendingInfo)-1].ID)
 	if xrangeCmdRes.Err() != nil {
-		log.Fatal("error while getting unacked messages: ", xrangeCmdRes.Err())
+		log.Println("error while getting unacked messages: ", xrangeCmdRes.Err())
 		return
 	}
 
@@ -73,7 +73,7 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
 
 	// process the message
 	if err := r.processLBSMessages(ctx, streams, r.rs); err != nil {
-		log.Fatal("fatal error while processing unacked messages: ", err, "exiting...")
+		log.Println("error while processing unacked messages: ", err, "exiting recovery...")
 		return
 	}
 }
