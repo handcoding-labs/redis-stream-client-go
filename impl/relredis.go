@@ -109,16 +109,19 @@ func (r *RecoverableRedisStreamClient) ID() string {
 //
 // This function initializes the RedisStreamClient by enabling keyspace notifications for expired events,
 // subscribing to expired events, and starting a blocking read on the LBS stream
-// Returns a channel to read messages from the LBS stream. The client should read from this
-// channel and process the messages.
-// Returns a channel to read keyspace notifications. The client should read from this channel
-// and process the notifications.
+// Returns a channel to read messages from the LBS stream. The client should read from this channel and
+// process the messages.
 func (r *RecoverableRedisStreamClient) Init(
 	ctx context.Context,
 ) (<-chan notifs.RecoverableRedisNotification[any], error) {
-	if r.checkErr(ctx, r.enableKeyspaceNotifsForExpiredEvents).
-		checkErr(ctx, r.subscribeToExpiredEvents) == nil {
-		return nil, fmt.Errorf("error initializing the client")
+	keyspaceErr := r.enableKeyspaceNotifsForExpiredEvents(ctx)
+	if keyspaceErr != nil {
+		return nil, fmt.Errorf("error while enabling keyspace notifications for expired events: %w", keyspaceErr)
+	}
+
+	expiredErr := r.subscribeToExpiredEvents(ctx)
+	if expiredErr != nil {
+		return nil, fmt.Errorf("error while subscribing to expired events: %w", expiredErr)
 	}
 
 	newCtx, cancelFunc := context.WithCancel(ctx)
