@@ -107,12 +107,12 @@ func (r *RecoverableRedisStreamClient) ID() string {
 func (r *RecoverableRedisStreamClient) Init(ctx context.Context) (<-chan notifs.RecoverableRedisNotification[any], error) {
 	keyspaceErr := r.enableKeyspaceNotifsForExpiredEvents(ctx)
 	if keyspaceErr != nil {
-		return nil, keyspaceErr
+		return nil, fmt.Errorf("error while enabling keyspace notifications for expired events: %w", keyspaceErr)
 	}
 
 	expiredErr := r.subscribeToExpiredEvents(ctx)
 	if expiredErr != nil {
-		return nil, expiredErr
+		return nil, fmt.Errorf("error while subscribing to expired events: %w", expiredErr)
 	}
 
 	lbsCtx, cancelFunc := context.WithCancel(ctx)
