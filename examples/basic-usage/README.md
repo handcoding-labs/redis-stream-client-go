@@ -44,15 +44,14 @@ This example demonstrates the fundamental usage of the Redis Stream Client Go li
 ## Expected Output
 
 ```
-2024/01/15 10:30:00 Connected to Redis successfully
-2024/01/15 10:30:00 Created client with ID: redis-consumer-basic-example-consumer-1705312200
-2024/01/15 10:30:00 Client initialized successfully
-2024/01/15 10:30:02 Adding test data to LBS...
-2024/01/15 10:30:02 Added test message 0 to LBS: 1705312202000-0
-2024/01/15 10:30:02 🎉 New stream added: {"DataStreamName":"user-session-0","Info":{"created_at":"2024-01-15T10:30:02Z","priority":"normal","session_id":"session-0-1705312202","user_id":"user-0"}}
-2024/01/15 10:30:02 Processing stream: user-session-0
-2024/01/15 10:30:02 Stream info: map[created_at:2024-01-15T10:30:02Z priority:normal session_id:session-0-1705312202 user_id:user-0]
-2024/01/15 10:30:02 ✅ Finished processing stream: user-session-0
+2024/01/15 10:30:00 INFO Connected to Redis successfully
+2024/01/15 10:30:00 INFO Created client client_id=redis-consumer-basic-example-consumer-1705312200
+2024/01/15 10:30:00 INFO Client initialized successfully
+2024/01/15 10:30:02 INFO Adding test data to LBS...
+2024/01/15 10:30:02 INFO Added test message to LBS message_id=0 stream_id=1705312202000-0
+2024/01/15 10:30:02 INFO 🎉 New stream added payload={"DataStreamName":"user-session-0","Info":{"created_at":"2024-01-15T10:30:02Z","priority":"normal","session_id":"session-0-1705312202","user_id":"user-0"}}
+2024/01/15 10:30:02 INFO Processing stream stream_name=user-session-0 stream_info=map[created_at:2024-01-15T10:30:02Z priority:normal session_id:session-0-1705312202 user_id:user-0]
+2024/01/15 10:30:02 INFO ✅ Finished processing stream stream_name=user-session-0
 ...
 ```
 
@@ -80,7 +79,8 @@ client := impl.NewRedisStreamClient(redisClient, "basic-example")
 // Initialize the client and get the notification channel
 outputChan, err := client.Init(ctx)
 if err != nil {
-    log.Fatalf("Failed to initialize client: %v", err)
+    slog.Error("Failed to initialize client", "error", err)
+    os.Exit(1)
 }
 ```
 

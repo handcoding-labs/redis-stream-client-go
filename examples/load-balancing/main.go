@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"sync"
@@ -45,7 +45,7 @@ func runConsumer() {
 		os.Setenv("POD_NAME", consumerID)
 	}
 
-	log.Printf("Starting consumer: %s", consumerID)
+	slog.Info("Starting consumer", "consumer_id", consumerID)
 
 	// Create Redis client
 	// Use environment variable for Redis address, default to localhost for local development
@@ -62,22 +62,25 @@ func runConsumer() {
 
 	// Test Redis connection
 	if err := redisClient.Ping(ctx).Err(); err != nil {
-		log.Fatalf("Failed to connect to Redis: %v", err)
+		slog.Error("Failed to connect to Redis", "error", err)
+		os.Exit(1)
 	}
 
 	// Enable keyspace notifications
 	if err := redisClient.ConfigSet(ctx, "notify-keyspace-events", "Ex").Err(); err != nil {
-		log.Fatalf("Failed to enable keyspace notifications: %v", err)
+		slog.Error("Failed to enable keyspace notifications", "error", err)
+		os.Exit(1)
 	}
 
 	// Create Redis Stream Client
 	client := impl.NewRedisStreamClient(redisClient, "load-balance-demo")
-	log.Printf("Created client with ID: %s", client.ID())
+	slog.Info("Created client", "client_id", client.ID())
 
 	// Initialize the client
 	outputChan, err := client.Init(ctx)
 	if err != nil {
-		log.Fatalf("Failed to initialize client: %v", err)
+		slog.Error("Failed to initialize client", "error", err)
+		os.Exit(1)
 	}
 
 	// Track processed streams
@@ -89,20 +92,20 @@ func runConsumer() {
 		for notification := range outputChan {
 			switch notification.Type {
 			case notifs.StreamAdded:
-				log.Printf("🎉 [%s] New stream assigned", consumerID)
+				slog.Info("🎉 New stream assigned", "consumer_id", consumerID)
 				go handleStreamAdded(ctx, client, notification.Payload.(string), &processedStreams, &streamCount)
 
 			case notifs.StreamExpired:
-				log.Printf("⚠️  [%s] Stream expired, attempting to claim: %v", consumerID, notification.Payload)
+				slog.Warn("⚠️  Stream expired, attempting to claim", "consumer_id", consumerID, "payload", notification.Payload)
 				if err := client.Claim(ctx, notification.Payload.(string)); err != nil {
-					log.Printf("❌ [%s] Failed to claim expired stream: %v", consumerID, err)
+					slog.Error("❌ Failed to claim expired stream", "consumer_id", consumerID, "error", err)
 				} else {
-					log.Printf("✅ [%s] Successfully claimed expired stream", consumerID)
+					slog.Info("✅ Successfully claimed expired stream", "consumer_id", consumerID)
 					go handleClaimedStream(ctx, client, notification.Payload.(string), &processedStreams, &streamCount)
 				}
 
 			case notifs.StreamDisowned:
-				log.Printf("❌ [%s] Stream disowned: %v", consumerID, notification.Payload)
+				slog.Warn("❌ Stream disowned", "consumer_id", consumerID, "payload", notification.Payload)
 			}
 		}
 	}()
@@ -112,20 +115,20 @@ func runConsumer() {
 
 	// Wait for shutdown signal
 	<-sigChan
-	log.Printf("🛑 [%s] Shutdown signal received, cleaning up...", consumerID)
+	slog.Info("🛑 Shutdown signal received, cleaning up...", "consumer_id", consumerID)
 
 	// Graceful shutdown
 	if err := client.Done(); err != nil {
-		log.Printf("❌ [%s] Error during cleanup: %v", consumerID, err)
+		slog.Error("❌ Error during cleanup", "consumer_id", consumerID, "error", err)
 	} else {
-		log.Printf("✅ [%s] Client cleanup completed", consumerID)
+		slog.Info("✅ Client cleanup completed", "consumer_id", consumerID)
 	}
 }
 
 func runProducer() {
 	ctx := context.Background()
 
-	log.Println("🏭 Starting producer...")
+	slog.Info("🏭 Starting producer...")
 
 	// Create Redis client
 	// Use environment variable for Redis address, default to localhost for local development
@@ -142,7 +145,8 @@ func runProducer() {
 
 	// Test connection
 	if err := redisClient.Ping(ctx).Err(); err != nil {
-		log.Fatalf("Failed to connect to Redis: %v", err)
+		slog.Error("Failed to connect to Redis", "error", err)
+		os.Exit(1)
 	}
 
 	// Produce messages continuously
@@ -164,7 +168,7 @@ func runProducer() {
 
 			messageData, err := json.Marshal(lbsMessage)
 			if err != nil {
-				log.Printf("❌ Failed to marshal message: %v", err)
+				slog.Error("❌ Failed to marshal message", "error", err)
 				continue
 			}
 
@@ -176,9 +180,9 @@ func runProducer() {
 			})
 
 			if result.Err() != nil {
-				log.Printf("❌ Failed to add message: %v", result.Err())
+				slog.Error("❌ Failed to add message", "error", result.Err())
 			} else {
-				log.Printf("📤 Produced message %d: %s", messageID, lbsMessage.DataStreamName)
+				slog.Info("📤 Produced message", "message_id", messageID, "stream_name", lbsMessage.DataStreamName)
 			}
 
 			messageID++
@@ -192,15 +196,15 @@ func runProducer() {
 func handleStreamAdded(ctx context.Context, client types.RedisStreamClient, payload string, processedStreams *sync.Map, streamCount *int32) {
 	var lbsMessage notifs.LBSMessage
 	if err := json.Unmarshal([]byte(payload), &lbsMessage); err != nil {
-		log.Printf("❌ Failed to unmarshal LBS message: %v", err)
+		slog.Error("❌ Failed to unmarshal LBS message", "error", err)
 		return
 	}
 
 	consumerID := client.ID()
 	streamName := lbsMessage.DataStreamName
 
-	log.Printf("🔄 [%s] Processing stream: %s", consumerID, streamName)
-	log.Printf("📋 [%s] Stream details: %+v", consumerID, lbsMessage.Info)
+	slog.Info("🔄 Processing stream", "consumer_id", consumerID, "stream_name", streamName)
+	slog.Debug("📋 Stream details", "consumer_id", consumerID, "stream_info", lbsMessage.Info)
 
 	// Simulate processing time (varies by priority)
 	processingTime := 2 * time.Second
@@ -222,13 +226,13 @@ func handleStreamAdded(ctx context.Context, client types.RedisStreamClient, payl
 
 	// In a real application, you would call client.DoneStream() when finished
 	// For this demo, we'll simulate completion
-	log.Printf("✅ [%s] Completed processing stream: %s (took %v)", consumerID, streamName, processingTime)
+	slog.Info("✅ Completed processing stream", "consumer_id", consumerID, "stream_name", streamName, "processing_time", processingTime)
 }
 
 func handleClaimedStream(ctx context.Context, client types.RedisStreamClient, payload string, processedStreams *sync.Map, streamCount *int32) {
 	// Extract stream name from the payload (format: "stream_name:message_id")
 	// For this demo, we'll just log that we claimed it
-	log.Printf("🔄 [%s] Processing claimed stream: %s", client.ID(), payload)
+	slog.Info("🔄 Processing claimed stream", "consumer_id", client.ID(), "payload", payload)
 
 	// Simulate processing the claimed stream
 	time.Sleep(1 * time.Second)
@@ -236,7 +240,7 @@ func handleClaimedStream(ctx context.Context, client types.RedisStreamClient, pa
 	processedStreams.Store(payload, time.Now())
 	*streamCount++
 
-	log.Printf("✅ [%s] Completed processing claimed stream: %s", client.ID(), payload)
+	slog.Info("✅ Completed processing claimed stream", "consumer_id", client.ID(), "payload", payload)
 }
 
 func printStatistics(ctx context.Context, consumerID string, processedStreams *sync.Map, streamCount *int32) {
@@ -249,7 +253,7 @@ func printStatistics(ctx context.Context, consumerID string, processedStreams *s
 			return
 		case <-ticker.C:
 			count := *streamCount
-			log.Printf("📊 [%s] Statistics: Processed %d streams", consumerID, count)
+			slog.Info("📊 Statistics", "consumer_id", consumerID, "processed_streams", count)
 
 			// Show recent streams
 			recentCount := 0
@@ -263,7 +267,7 @@ func printStatistics(ctx context.Context, consumerID string, processedStreams *s
 			})
 
 			if recentCount > 0 {
-				log.Printf("📈 [%s] Recent activity: %d streams in last 10 seconds", consumerID, recentCount)
+				slog.Info("📈 Recent activity", "consumer_id", consumerID, "recent_streams", recentCount)
 			}
 		}
 	}

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
@@ -46,21 +46,21 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
 	})
 
 	if xpendingCmdRes.Err() != nil {
-		log.Println("error while getting unacked messages: ", xpendingCmdRes.Err())
+		slog.Error("error while getting unacked messages", "error", xpendingCmdRes.Err())
 		return
 	}
 
 	xpendingInfo := xpendingCmdRes.Val()
 	if len(xpendingInfo) == 0 {
-		log.Println("no unacked messages found in LBS for consumer, skipping recovery")
+		slog.Info("no unacked messages found in LBS for consumer, skipping recovery")
 		return
 	}
 
-	log.Println("unacked messages found in LBS for consumer: ", xpendingInfo)
+	slog.Info("unacked messages found in LBS for consumer", "pending_count", len(xpendingInfo))
 
 	xrangeCmdRes := r.redisClient.XRange(ctx, r.lbsName(), xpendingInfo[0].ID, xpendingInfo[len(xpendingInfo)-1].ID)
 	if xrangeCmdRes.Err() != nil {
-		log.Println("error while getting unacked messages: ", xrangeCmdRes.Err())
+		slog.Error("error while getting unacked messages", "error", xrangeCmdRes.Err())
 		return
 	}
 
@@ -73,7 +73,7 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
 
 	// process the message
 	if err := r.processLBSMessages(ctx, streams, r.rs); err != nil {
-		log.Println("error while processing unacked messages: ", err, "exiting recovery...")
+		slog.Error("fatal error while processing unacked messages", "error", err)
 		return
 	}
 }
@@ -97,12 +97,12 @@ func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
 			if errors.Is(res.Err(), context.Canceled) {
 				return
 			}
-			log.Fatal("error while reading from LBS: ", res.Err())
+			slog.Error("error while reading from LBS", "error", res.Err())
 			return
 		}
 
 		if err := r.processLBSMessages(ctx, res.Val(), r.rs); err != nil {
-			log.Fatal("fatal error while reading lbs: ", err, "exiting...")
+			slog.Error("fatal error while reading lbs", "error", err)
 			return
 		}
 	}
@@ -160,7 +160,7 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(
 			// now, keep extending the lock in a separate go routine
 			go func() {
 				if err := r.startExtendingKey(ctx, mutex, lbsInfo.DataStreamName); err != nil {
-					log.Printf("Error extending key: %v", err)
+					slog.Error("Error extending key", "error", err, "stream", lbsInfo.DataStreamName)
 				}
 			}()
 		}
@@ -184,7 +184,7 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 
 	for {
 		if r.isContextDone(ctx) {
-			log.Println("context done, exiting", r.consumerID)
+			slog.Debug("context done, exiting", "consumer_id", r.consumerID)
 			return nil
 		}
 
@@ -204,18 +204,18 @@ func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("context done, exiting", r.consumerID)
+			slog.Debug("context done, exiting", "consumer_id", r.consumerID)
 			return
 		case kspNotif := <-r.kspChan:
 			if kspNotif != nil {
-				log.Println("ksp notif received", r.consumerID, kspNotif.Payload)
+				slog.Debug("ksp notif received", "consumer_id", r.consumerID, "payload", kspNotif.Payload)
 				r.outputChan <- notifs.Make(kspNotif.Payload, notifs.StreamExpired)
 			}
 		case <-ticker.C:
 			// check if the channel is closed,
 			// this means that the client has called Done and is no longer interested in expired notifications
 			if r.outputChanClosed.Load() {
-				log.Println("output channel closed, exiting", r.consumerID)
+				slog.Debug("output channel closed, exiting", "consumer_id", r.consumerID)
 				return
 			}
 		}
