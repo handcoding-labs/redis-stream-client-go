@@ -144,7 +144,8 @@ func (r *RecoverableRedisStreamClient) Init(
 
 // Claim claims pending messages from a stream
 func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, mutexKey string) error {
-	slog.Info("claiming stream", "consumer_id", r.consumerID, "mutex_key", mutexKey, "timestamp", time.Now().Format(time.RFC3339))
+	slog.Info("claiming stream", "consumer_id", r.consumerID, "mutex_key", mutexKey,
+		"timestamp", time.Now().Format(time.RFC3339))
 
 	lbsInfo, err := createByMutexKey(mutexKey)
 	if err != nil {
