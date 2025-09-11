@@ -469,38 +469,55 @@ func TestAdditionalInfoConsistency(t *testing.T) {
 	}).Result()
 	require.NoError(t, err)
 
-	// Consumer1 should receive the stream with AdditionalInfo
+	// Wait for one of the consumers to receive the stream (load balancing means either could get it)
+	var otherConsumerChan <-chan notifs.RecoverableRedisNotification
+
 	select {
 	case msg := <-opChan1:
 		if msg.Type == notifs.StreamAdded {
 			require.Equal(t, "test-session", msg.Payload.DataStreamName)
 			require.Equal(t, "high", msg.AdditionalInfo["priority"])
 			require.Equal(t, "test-user-123", msg.AdditionalInfo["user_id"])
+			otherConsumerChan = opChan2
+		}
+	case msg := <-opChan2:
+		if msg.Type == notifs.StreamAdded {
+			require.Equal(t, "test-session", msg.Payload.DataStreamName)
+			require.Equal(t, "high", msg.AdditionalInfo["priority"])
+			require.Equal(t, "test-user-123", msg.AdditionalInfo["user_id"])
+			otherConsumerChan = opChan1
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("Consumer1 did not receive stream")
+		t.Fatal("Neither consumer received the stream")
 	}
 
-	// Simulate consumer1 crash by not calling Done
-	// Wait for expiration and consumer2 to claim
+	// Simulate the assigned consumer crash by not calling Done
+	// Wait for expiration and the other consumer to receive expiry notification
 	time.Sleep(3 * time.Second)
 
-	// Consumer2 should receive StreamExpired with same AdditionalInfo
+	// The other consumer should receive StreamExpired with same AdditionalInfo
 	select {
-	case msg := <-opChan2:
+	case msg := <-otherConsumerChan:
 		if msg.Type == notifs.StreamExpired {
 			require.Equal(t, "test-session", msg.Payload.DataStreamName)
 			require.Equal(t, "high", msg.AdditionalInfo["priority"])
 			require.Equal(t, "test-user-123", msg.AdditionalInfo["user_id"])
 
-			// Claim the stream
-			err = consumer2.Claim(ctx, msg.Payload)
-			require.NoError(t, err)
+			// Claim the stream - determine which consumer to use based on which channel this is
+			if otherConsumerChan == opChan1 {
+				err = consumer1.Claim(ctx, msg.Payload)
+				require.NoError(t, err)
+			} else {
+				err = consumer2.Claim(ctx, msg.Payload)
+				require.NoError(t, err)
+			}
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("Consumer2 did not receive expired stream notification")
+		t.Fatal("Other consumer did not receive expired stream notification")
 	}
 
+	err = consumer1.Done()
+	require.NoError(t, err)
 	err = consumer2.Done()
 	require.NoError(t, err)
 }
