@@ -151,11 +151,13 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(
 				return err
 			}
 
+			r.streamLocksMutex.Lock()
 			r.streamLocks[lbsInfo.DataStreamName] = &StreamLocksInfo{
 				LBSInfo:        lbsInfo,
 				Mutex:          mutex,
 				AdditionalInfo: lbsMessage.Info,
 			}
+			r.streamLocksMutex.Unlock()
 			r.outputChan <- notifs.Make(notifs.StreamAdded, lbsInfo, lbsMessage.Info)
 
 			// now, keep extending the lock in a separate go routine
@@ -219,9 +221,11 @@ func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
 
 				// Try to get additional info from stored stream locks
 				var additionalInfo map[string]any
+				r.streamLocksMutex.RLock()
 				if streamLockInfo, exists := r.streamLocks[lbsInfo.DataStreamName]; exists {
 					additionalInfo = streamLockInfo.AdditionalInfo
 				}
+				r.streamLocksMutex.RUnlock()
 				r.outputChan <- notifs.Make(notifs.StreamExpired, lbsInfo, additionalInfo)
 			}
 		case <-ticker.C:

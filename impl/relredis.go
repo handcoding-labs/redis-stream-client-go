@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -41,6 +42,8 @@ type RecoverableRedisStreamClient struct {
 	hbInterval time.Duration
 	// streamLocks is a map of stream name to LBSInfo for locking
 	streamLocks map[string]*StreamLocksInfo
+	// streamLocksMutex protects streamLocks map from concurrent access
+	streamLocksMutex sync.RWMutex
 	// serviceName is the name of the service
 	serviceName string
 	// redis pub sub subscription
@@ -215,11 +218,13 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs
 	}()
 
 	// populate StreamLocks info
+	r.streamLocksMutex.Lock()
 	r.streamLocks[lbsInfo.DataStreamName] = &StreamLocksInfo{
 		LBSInfo:        lbsInfo,
 		Mutex:          mutex,
 		AdditionalInfo: additionalInfo,
 	}
+	r.streamLocksMutex.Unlock()
 
 	return nil
 }
@@ -229,15 +234,16 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs
 // This function is used to mark the end of processing for a particular stream
 // It unlocks the stream and acknowledges the message and cleans up internal state
 func (r *RecoverableRedisStreamClient) DoneStream(ctx context.Context, dataStreamName string) error {
+	r.streamLocksMutex.Lock()
 	streamLocksInfo, ok := r.streamLocks[dataStreamName]
 	if !ok {
+		r.streamLocksMutex.Unlock()
 		return fmt.Errorf("stream not found")
 	}
 
 	// delete volatile key from streamLocks
-	if ok {
-		delete(r.streamLocks, dataStreamName)
-	}
+	delete(r.streamLocks, dataStreamName)
+	r.streamLocksMutex.Unlock()
 
 	// unlock the stream
 	_, err := streamLocksInfo.Mutex.Unlock()
@@ -262,7 +268,15 @@ func (r *RecoverableRedisStreamClient) DoneStream(ctx context.Context, dataStrea
 func (r *RecoverableRedisStreamClient) Done() error {
 	ctx := context.Background()
 
+	// Get all stream names first to avoid holding lock during DoneStream calls
+	r.streamLocksMutex.RLock()
+	streamNames := make([]string, 0, len(r.streamLocks))
 	for streamName := range r.streamLocks {
+		streamNames = append(streamNames, streamName)
+	}
+	r.streamLocksMutex.RUnlock()
+
+	for _, streamName := range streamNames {
 		if err := r.DoneStream(ctx, streamName); err != nil {
 			return err
 		}
