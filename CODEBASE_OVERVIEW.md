@@ -21,15 +21,26 @@ Key files to explore:
 1. **`types/types.go`** – Defines the `RedisStreamClient` interface with methods `Init`, `Claim`, `Done`, and `ID`.
 2. **`impl/relredis.go`** – Implements the interface through `RecoverableRedisStreamClient`, managing connections, locks, and notifications.
 3. **`impl/init.go`** – Handles keyspace notification subscriptions and the LBS reading loop.
-4. **`notifs/relredisnotif.go`** – Defines notification structures such as `StreamAdded`, `StreamDisowned`, and `StreamExpired`.
-5. **`test/client_test.go`** – Contains extensive integration tests demonstrating expected behaviors.
+4. **`notifs/relredisnotif.go`** – Defines notification structures such as `StreamAdded`, `StreamDisowned`, and `StreamExpired`, and the `LBSInputMessage` structure.
+5. **`notifs/lbsmsg.go`** – Contains `LBSInfo` structure and helper functions for managing LBS message metadata.
+6. **`test/client_test.go`** – Contains extensive integration tests demonstrating expected behaviors.
 
 ## Usage Basics
 
 1. Create the client with your `redis.UniversalClient` and service name.
 2. Call `Init(ctx)` to start listening for new streams and keyspace events. The returned channel provides unified notifications.
-3. Use `Claim(ctx, payload)` when receiving a stream expiration notification to take over work from stalled consumers.
-4. Call `Done()` on shutdown to release locks and clean up.
+3. Add messages to the LBS using `LBSInputMessage` structure with `DataStreamName` and optional `Info` metadata.
+4. Process notifications from the output channel, handling `StreamAdded`, `StreamExpired`, and `StreamDisowned` events.
+5. Use `Claim(ctx, payload)` when receiving a stream expiration notification to take over work from stalled consumers.
+6. Call `Done()` on shutdown to release locks and clean up.
+
+## Message Structure
+
+The library uses a standardized message format for LBS communication:
+
+- **`LBSInputMessage`** – Structure for adding messages to LBS with `DataStreamName` and `Info` fields
+- **`LBSInfo`** – Internal structure containing `DataStreamName` and `IDInLBS` for stream identification
+- **`RecoverableRedisNotification`** – Notification structure with `Type`, `Payload` (LBSInfo), and `AdditionalInfo` (from original Info field)
 
 ## Next Steps for Learning
 

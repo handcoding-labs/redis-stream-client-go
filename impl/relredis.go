@@ -2,6 +2,7 @@ package impl
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -21,8 +22,9 @@ import (
 
 // StreamLocksInfo holds information needed to operation with data streams and their management for synchronization
 type StreamLocksInfo struct {
-	LBSInfo notifs.LBSInfo
-	Mutex   *redsync.Mutex
+	LBSInfo        notifs.LBSInfo
+	Mutex          *redsync.Mutex
+	AdditionalInfo map[string]any
 }
 
 // RecoverableRedisStreamClient is an implementation of the RedisStreamClient interface
@@ -172,7 +174,7 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs
 
 	claimed, err := res.Result()
 	if err != nil {
-		slog.Error("error getting claimed stream", "error", err, "consumer_id", r.consumerID, "mutex_key")
+		slog.Error("error getting claimed stream", "error", err, "consumer_id", r.consumerID, "mutex_key", lbsInfo.FormMutexKey())
 		return err
 	}
 
@@ -194,16 +196,28 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs
 		return err
 	}
 
+	// Retrieve the original message to get AdditionalInfo
+	var additionalInfo map[string]any
+	if len(claimed) > 0 {
+		if lbsInputStr, ok := claimed[0].Values[configs.LBSInput].(string); ok {
+			var lbsMessage notifs.LBSInputMessage
+			if err := json.Unmarshal([]byte(lbsInputStr), &lbsMessage); err == nil {
+				additionalInfo = lbsMessage.Info
+			}
+		}
+	}
+
 	go func() {
-		if err := r.startExtendingKey(ctx, mutex, lbsInfo, nil); err != nil {
+		if err := r.startExtendingKey(ctx, mutex, lbsInfo, additionalInfo); err != nil {
 			slog.Error("Error extending key", "error", err, "stream", lbsInfo.DataStreamName, "consumer_id", r.consumerID)
 		}
 	}()
 
 	// populate StreamLocks info
 	r.streamLocks[lbsInfo.DataStreamName] = &StreamLocksInfo{
-		LBSInfo: lbsInfo,
-		Mutex:   mutex,
+		LBSInfo:        lbsInfo,
+		Mutex:          mutex,
+		AdditionalInfo: additionalInfo,
 	}
 
 	return nil

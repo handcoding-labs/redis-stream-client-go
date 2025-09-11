@@ -424,6 +424,87 @@ func TestKspNotifsBulk(t *testing.T) {
 	require.Equal(t, totalExpected, totalActual)
 }
 
+func TestAdditionalInfoConsistency(t *testing.T) {
+	ctx := context.TODO()
+	redisContainer := setupSuite(t)
+
+	redisClient := newRedisClient(redisContainer)
+	res := redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
+	require.NoError(t, res.Err())
+
+	// create consumer1 client
+	consumer1 := createConsumer("111", redisContainer)
+	require.NotNil(t, consumer1)
+	opChan1, err := consumer1.Init(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, opChan1)
+
+	// create consumer2 client
+	consumer2 := createConsumer("222", redisContainer)
+	require.NotNil(t, consumer2)
+	opChan2, err := consumer2.Init(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, opChan2)
+
+	// Add a stream with specific additional info
+	producer := newRedisClient(redisContainer)
+	defer producer.Close()
+
+	expectedInfo := map[string]interface{}{
+		"priority": "high",
+		"user_id":  "test-user-123",
+	}
+
+	lbsMsg, err := json.Marshal(notifs.LBSInputMessage{
+		DataStreamName: "test-session",
+		Info:           expectedInfo,
+	})
+	require.NoError(t, err)
+
+	_, err = producer.XAdd(context.Background(), &redisgo.XAddArgs{
+		Stream: "consumer-input",
+		Values: map[string]any{
+			configs.LBSInput: string(lbsMsg),
+		},
+	}).Result()
+	require.NoError(t, err)
+
+	// Consumer1 should receive the stream with AdditionalInfo
+	select {
+	case msg := <-opChan1:
+		if msg.Type == notifs.StreamAdded {
+			require.Equal(t, "test-session", msg.Payload.DataStreamName)
+			require.Equal(t, "high", msg.AdditionalInfo["priority"])
+			require.Equal(t, "test-user-123", msg.AdditionalInfo["user_id"])
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Consumer1 did not receive stream")
+	}
+
+	// Simulate consumer1 crash by not calling Done
+	// Wait for expiration and consumer2 to claim
+	time.Sleep(3 * time.Second)
+
+	// Consumer2 should receive StreamExpired with same AdditionalInfo
+	select {
+	case msg := <-opChan2:
+		if msg.Type == notifs.StreamExpired {
+			require.Equal(t, "test-session", msg.Payload.DataStreamName)
+			require.Equal(t, "high", msg.AdditionalInfo["priority"])
+			require.Equal(t, "test-user-123", msg.AdditionalInfo["user_id"])
+
+			// Claim the stream
+			err := consumer2.Claim(ctx, msg.Payload)
+			require.NoError(t, err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Consumer2 did not receive expired stream notification")
+	}
+
+	err = consumer2.Done()
+	require.NoError(t, err)
+}
+
 func TestMainFlow(t *testing.T) {
 	// Main flow:
 	// there is one producer and two consumers: consumer1 and consumer2
@@ -544,7 +625,7 @@ func TestMainFlow(t *testing.T) {
 				require.True(t, consumer1Crashed)
 				require.True(t, ok)
 				require.NotNil(t, notif)
-				require.Contains(t, notif.Payload, "session")
+				require.Contains(t, notif.Payload.DataStreamName, "session")
 				err = consumer2.Claim(consumer2Ctx, notif.Payload)
 				require.NoError(t, err)
 				res := simpleRedisClient.XInfoStreamFull(context.Background(), "consumer-input", 100)

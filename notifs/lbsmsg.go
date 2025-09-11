@@ -7,7 +7,7 @@ import (
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
 )
 
-// lbsInfo contains information about a data stream in LBS. It's an internal data structure.
+// LBSInfo contains information about a data stream in LBS. It's an internal data structure.
 type LBSInfo struct {
 	DataStreamName string
 	IDInLBS        string

@@ -152,8 +152,9 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(
 			}
 
 			r.streamLocks[lbsInfo.DataStreamName] = &StreamLocksInfo{
-				LBSInfo: lbsInfo,
-				Mutex:   mutex,
+				LBSInfo:        lbsInfo,
+				Mutex:          mutex,
+				AdditionalInfo: lbsMessage.Info,
 			}
 			r.outputChan <- notifs.Make(notifs.StreamAdded, lbsInfo, lbsMessage.Info)
 
@@ -216,7 +217,12 @@ func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
 					return
 				}
 
-				r.outputChan <- notifs.Make(notifs.StreamExpired, lbsInfo, nil)
+				// Try to get additional info from stored stream locks
+				var additionalInfo map[string]any
+				if streamLockInfo, exists := r.streamLocks[lbsInfo.DataStreamName]; exists {
+					additionalInfo = streamLockInfo.AdditionalInfo
+				}
+				r.outputChan <- notifs.Make(notifs.StreamExpired, lbsInfo, additionalInfo)
 			}
 		case <-ticker.C:
 			// check if the channel is closed,
