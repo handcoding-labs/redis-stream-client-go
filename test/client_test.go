@@ -425,24 +425,28 @@ func TestKspNotifsBulk(t *testing.T) {
 }
 
 func TestAdditionalInfoConsistency(t *testing.T) {
-	ctx := context.TODO()
+	ctxWithCancel := context.TODO()
+	consumer1Ctx, consumer1CancelFunc := context.WithCancel(ctxWithCancel)
+	consumer2Ctx, consumer2CancelFunc := context.WithCancel(ctxWithCancel)
+	defer consumer2CancelFunc()
+
 	redisContainer := setupSuite(t)
 
 	redisClient := newRedisClient(redisContainer)
-	res := redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
+	res := redisClient.ConfigSet(consumer1Ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
 	require.NoError(t, res.Err())
 
 	// create consumer1 client
 	consumer1 := createConsumer("111", redisContainer)
 	require.NotNil(t, consumer1)
-	opChan1, err := consumer1.Init(ctx)
+	opChan1, err := consumer1.Init(consumer1Ctx)
 	require.NoError(t, err)
 	require.NotNil(t, opChan1)
 
 	// create consumer2 client
 	consumer2 := createConsumer("222", redisContainer)
 	require.NotNil(t, consumer2)
-	opChan2, err := consumer2.Init(ctx)
+	opChan2, err := consumer2.Init(consumer2Ctx)
 	require.NoError(t, err)
 	require.NotNil(t, opChan2)
 
@@ -471,6 +475,7 @@ func TestAdditionalInfoConsistency(t *testing.T) {
 
 	// Wait for one of the consumers to receive the stream (load balancing means either could get it)
 	var otherConsumerChan <-chan notifs.RecoverableRedisNotification
+	var crashedConsumerCancelFunc context.CancelFunc
 
 	select {
 	case msg := <-opChan1:
@@ -479,6 +484,7 @@ func TestAdditionalInfoConsistency(t *testing.T) {
 			require.Equal(t, "high", msg.AdditionalInfo["priority"])
 			require.Equal(t, "test-user-123", msg.AdditionalInfo["user_id"])
 			otherConsumerChan = opChan2
+			crashedConsumerCancelFunc = consumer1CancelFunc
 		}
 	case msg := <-opChan2:
 		if msg.Type == notifs.StreamAdded {
@@ -486,14 +492,17 @@ func TestAdditionalInfoConsistency(t *testing.T) {
 			require.Equal(t, "high", msg.AdditionalInfo["priority"])
 			require.Equal(t, "test-user-123", msg.AdditionalInfo["user_id"])
 			otherConsumerChan = opChan1
+			crashedConsumerCancelFunc = consumer2CancelFunc
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Neither consumer received the stream")
 	}
 
-	// Simulate the assigned consumer crash by not calling Done
+	// Simulate the assigned consumer crash by canceling its context
+	crashedConsumerCancelFunc()
+
 	// Wait for expiration and the other consumer to receive expiry notification
-	time.Sleep(3 * time.Second)
+	time.Sleep(5 * time.Second)
 
 	// The other consumer should receive StreamExpired with same AdditionalInfo
 	select {
@@ -505,21 +514,25 @@ func TestAdditionalInfoConsistency(t *testing.T) {
 
 			// Claim the stream - determine which consumer to use based on which channel this is
 			if otherConsumerChan == opChan1 {
-				err = consumer1.Claim(ctx, msg.Payload)
+				err = consumer1.Claim(consumer1Ctx, msg.Payload)
 				require.NoError(t, err)
 			} else {
-				err = consumer2.Claim(ctx, msg.Payload)
+				err = consumer2.Claim(consumer2Ctx, msg.Payload)
 				require.NoError(t, err)
 			}
 		}
-	case <-time.After(10 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatal("Other consumer did not receive expired stream notification")
 	}
 
-	err = consumer1.Done()
-	require.NoError(t, err)
-	err = consumer2.Done()
-	require.NoError(t, err)
+	// Clean up remaining consumer
+	if otherConsumerChan == opChan1 {
+		err = consumer1.Done()
+		require.NoError(t, err)
+	} else {
+		err = consumer2.Done()
+		require.NoError(t, err)
+	}
 }
 
 func TestMainFlow(t *testing.T) {
