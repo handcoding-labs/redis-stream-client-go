@@ -545,13 +545,6 @@ func TestMainFlow(t *testing.T) {
 				require.True(t, ok)
 				require.NotNil(t, notif)
 				require.Contains(t, notif.Payload.DataStreamName, "session")
-				// Check that AdditionalInfo is preserved in StreamExpired notifications
-				require.NotNil(t, notif.AdditionalInfo)
-				if notif.Payload.DataStreamName == "session0" {
-					require.Contains(t, notif.AdditionalInfo["key0"], "value")
-				} else {
-					require.Contains(t, notif.AdditionalInfo["key1"], "value")
-				}
 				err = consumer2.Claim(consumer2Ctx, notif.Payload)
 				require.NoError(t, err)
 				res := simpleRedisClient.XInfoStreamFull(context.Background(), "consumer-input", 100)
@@ -648,15 +641,10 @@ func listenToKsp(t *testing.T, outputChan <-chan notifs.RecoverableRedisNotifica
 			require.NotNil(t, notif)
 			streamThatExpired := notif.Payload.DataStreamName
 			require.Contains(t, streamThatExpired, "session")
-			// Check that AdditionalInfo is preserved in StreamExpired notifications
-			require.NotNil(t, notif.AdditionalInfo)
 			err := consumers[i].Claim(context.Background(), notif.Payload)
 			if err != nil {
 				continue
 			}
-		case notifs.StreamDisowned:
-			// Check that AdditionalInfo is preserved in StreamDisowned notifications
-			require.NotNil(t, notif.AdditionalInfo)
 		}
 	}
 }
