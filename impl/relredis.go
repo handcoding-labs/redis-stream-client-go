@@ -174,7 +174,8 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs
 
 	claimed, err := res.Result()
 	if err != nil {
-		slog.Error("error getting claimed stream", "error", err, "consumer_id", r.consumerID, "mutex_key", lbsInfo.FormMutexKey())
+		slog.Error("error getting claimed stream", "error", err, "consumer_id", r.consumerID,
+			"mutex_key", lbsInfo.FormMutexKey())
 		return err
 	}
 

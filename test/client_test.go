@@ -494,7 +494,7 @@ func TestAdditionalInfoConsistency(t *testing.T) {
 			require.Equal(t, "test-user-123", msg.AdditionalInfo["user_id"])
 
 			// Claim the stream
-			err := consumer2.Claim(ctx, msg.Payload)
+			err = consumer2.Claim(ctx, msg.Payload)
 			require.NoError(t, err)
 		}
 	case <-time.After(10 * time.Second):
