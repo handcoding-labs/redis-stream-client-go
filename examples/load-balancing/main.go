@@ -93,7 +93,7 @@ func runConsumer() {
 			switch notification.Type {
 			case notifs.StreamAdded:
 				slog.Info("🎉 New stream assigned", "consumer_id", consumerID)
-				go handleStreamAdded(ctx, client, notification.Payload.(string), &processedStreams, &streamCount)
+				go handleStreamAdded(ctx, client, notification, &processedStreams, &streamCount)
 
 			case notifs.StreamExpired:
 				slog.Warn("⚠️  Stream expired, attempting to claim", "consumer_id", consumerID, "payload", notification.Payload)
@@ -193,9 +193,9 @@ func runProducer() {
 	}
 }
 
-func handleStreamAdded(ctx context.Context, client types.RedisStreamClient, payload string, processedStreams *sync.Map, streamCount *int32) {
-	var lbsMessage notifs.LBSMessage
-	if err := json.Unmarshal([]byte(payload), &lbsMessage); err != nil {
+func handleStreamAdded(ctx context.Context, client types.RedisStreamClient, payload notifs.RecoverableRedisNotification, processedStreams *sync.Map, streamCount *int32) {
+	var lbsMessage notifs.LBSInputMessage
+	if err := json.Unmarshal([]byte(payload.), &lbsMessage); err != nil {
 		slog.Error("❌ Failed to unmarshal LBS message", "error", err)
 		return
 	}

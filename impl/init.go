@@ -122,7 +122,7 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(
 			}
 
 			// unmarshal the message
-			var lbsMessage notifs.LBSMessage
+			var lbsMessage notifs.LBSInputMessage
 			if err := json.Unmarshal([]byte(v.(string)), &lbsMessage); err != nil {
 				return fmt.Errorf("error while unmarshalling LBS message")
 			}
@@ -131,13 +131,13 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(
 				return fmt.Errorf("invalid message type on LBS")
 			}
 
-			lbsInfo, err := createByParts(lbsMessage.DataStreamName, message.ID)
+			lbsInfo, err := notifs.CreateByParts(lbsMessage.DataStreamName, message.ID)
 			if err != nil {
 				return err
 			}
 
 			// create mutex
-			mutex := rs.NewMutex(lbsInfo.getMutexKey(),
+			mutex := rs.NewMutex(lbsInfo.FormMutexKey(),
 				redsync.WithExpiry(r.hbInterval),
 				redsync.WithFailFast(true),
 				redsync.WithRetryDelay(10*time.Millisecond),
@@ -151,15 +151,15 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(
 				return err
 			}
 
-			// now seed the mutex
-			lbsInfo.Mutex = mutex
-
-			r.streamLocks[lbsInfo.DataStreamName] = lbsInfo
-			r.outputChan <- notifs.Make(v, notifs.StreamAdded)
+			r.streamLocks[lbsInfo.DataStreamName] = &StreamLocksInfo{
+				LBSInfo: lbsInfo,
+				Mutex:   mutex,
+			}
+			r.outputChan <- notifs.Make(notifs.StreamAdded, lbsInfo, lbsMessage.Info)
 
 			// now, keep extending the lock in a separate go routine
 			go func() {
-				if err := r.startExtendingKey(ctx, mutex, lbsInfo.DataStreamName); err != nil {
+				if err := r.startExtendingKey(ctx, mutex, lbsInfo, lbsMessage.Info); err != nil {
 					slog.Error("Error extending key", "error", err, "stream", lbsInfo.DataStreamName)
 				}
 			}()
@@ -172,13 +172,14 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(
 func (r *RecoverableRedisStreamClient) startExtendingKey(
 	ctx context.Context,
 	mutex *redsync.Mutex,
-	streamName string,
+	lbsInfo notifs.LBSInfo,
+	additionalInfo map[string]any,
 ) error {
 	extensionFailed := false
 	defer func() {
 		if extensionFailed && !r.outputChanClosed.Load() {
 			// if client is still interested or is coming back from a delay (GC pause etc) then inform about disowning of stream
-			r.outputChan <- notifs.Make(streamName, notifs.StreamDisowned)
+			r.outputChan <- notifs.Make(notifs.StreamDisowned, lbsInfo, additionalInfo)
 		}
 	}()
 
@@ -209,7 +210,13 @@ func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
 		case kspNotif := <-r.kspChan:
 			if kspNotif != nil {
 				slog.Debug("ksp notif received", "consumer_id", r.consumerID, "payload", kspNotif.Payload)
-				r.outputChan <- notifs.Make(kspNotif.Payload, notifs.StreamExpired)
+				lbsInfo, err := notifs.CreateByKspNotification(kspNotif.Payload)
+				if err != nil {
+					slog.Error("error parsing ksp notification", "ksp_notification", kspNotif)
+					return
+				}
+
+				r.outputChan <- notifs.Make(notifs.StreamExpired, lbsInfo, nil)
 			}
 		case <-ticker.C:
 			// check if the channel is closed,
