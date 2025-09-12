@@ -144,13 +144,22 @@ If you kill a consumer (Ctrl+C), other consumers will automatically claim its un
 ### Producer Logic
 ```go
 // Create messages with different priorities
-lbsMessage := notifs.LBSMessage{
+lbsMessage := notifs.LBSInputMessage{
     DataStreamName: fmt.Sprintf("order-stream-%d", messageID),
     Info: map[string]interface{}{
         "order_id":    fmt.Sprintf("order-%d", messageID),
+        "customer_id": fmt.Sprintf("customer-%d", messageID%100),
+        "amount":      float64(messageID%1000 + 100),
         "priority":    []string{"low", "normal", "high"}[messageID%3],
-        // ... other fields
+        "status":      "pending",
+        "created_at":  time.Now().Format(time.RFC3339),
     },
+}
+
+// Marshal to JSON
+messageData, err := json.Marshal(lbsMessage)
+if err != nil {
+    return err
 }
 
 // Add to LBS
@@ -166,12 +175,14 @@ redisClient.XAdd(ctx, &redis.XAddArgs{
 ```go
 // Handle new stream assignment
 case notifs.StreamAdded:
-    go handleStreamAdded(ctx, client, notification.Payload.(string))
+    // notification.Payload contains LBSInfo with DataStreamName and IDInLBS
+    // notification.AdditionalInfo contains the Info field from LBSInputMessage
+    go handleStreamAdded(ctx, client, notification, &processedStreams, &streamCount)
 
 // Handle claiming from failed consumer
 case notifs.StreamExpired:
-    client.Claim(ctx, notification.Payload.(string))
-    go handleClaimedStream(ctx, client, notification.Payload.(string))
+    client.Claim(ctx, notification.Payload)
+    go handleClaimedStream(ctx, client, notification.Payload.DataStreamName, &processedStreams, &streamCount)
 ```
 
 ### Statistics Tracking

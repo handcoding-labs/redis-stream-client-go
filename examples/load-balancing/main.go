@@ -93,15 +93,15 @@ func runConsumer() {
 			switch notification.Type {
 			case notifs.StreamAdded:
 				slog.Info("🎉 New stream assigned", "consumer_id", consumerID)
-				go handleStreamAdded(ctx, client, notification.Payload.(string), &processedStreams, &streamCount)
+				go handleStreamAdded(ctx, client, notification, &processedStreams, &streamCount)
 
 			case notifs.StreamExpired:
 				slog.Warn("⚠️  Stream expired, attempting to claim", "consumer_id", consumerID, "payload", notification.Payload)
-				if err := client.Claim(ctx, notification.Payload.(string)); err != nil {
+				if err := client.Claim(ctx, notification.Payload); err != nil {
 					slog.Error("❌ Failed to claim expired stream", "consumer_id", consumerID, "error", err)
 				} else {
 					slog.Info("✅ Successfully claimed expired stream", "consumer_id", consumerID)
-					go handleClaimedStream(ctx, client, notification.Payload.(string), &processedStreams, &streamCount)
+					go handleClaimedStream(ctx, client, notification.Payload.DataStreamName, &processedStreams, &streamCount)
 				}
 
 			case notifs.StreamDisowned:
@@ -154,7 +154,7 @@ func runProducer() {
 	for {
 		// Create batch of messages
 		for i := 0; i < 5; i++ {
-			lbsMessage := notifs.LBSMessage{
+			lbsMessage := notifs.LBSInputMessage{
 				DataStreamName: fmt.Sprintf("order-stream-%d", messageID),
 				Info: map[string]interface{}{
 					"order_id":    fmt.Sprintf("order-%d", messageID),
@@ -193,22 +193,16 @@ func runProducer() {
 	}
 }
 
-func handleStreamAdded(ctx context.Context, client types.RedisStreamClient, payload string, processedStreams *sync.Map, streamCount *int32) {
-	var lbsMessage notifs.LBSMessage
-	if err := json.Unmarshal([]byte(payload), &lbsMessage); err != nil {
-		slog.Error("❌ Failed to unmarshal LBS message", "error", err)
-		return
-	}
-
+func handleStreamAdded(ctx context.Context, client types.RedisStreamClient, notification notifs.RecoverableRedisNotification, processedStreams *sync.Map, streamCount *int32) {
 	consumerID := client.ID()
-	streamName := lbsMessage.DataStreamName
+	streamName := notification.Payload.DataStreamName
 
 	slog.Info("🔄 Processing stream", "consumer_id", consumerID, "stream_name", streamName)
-	slog.Debug("📋 Stream details", "consumer_id", consumerID, "stream_info", lbsMessage.Info)
+	slog.Debug("📋 Stream details", "consumer_id", consumerID, "stream_info", notification.Payload)
 
 	// Simulate processing time (varies by priority)
 	processingTime := 2 * time.Second
-	if priority, ok := lbsMessage.Info["priority"].(string); ok {
+	if priority, ok := notification.AdditionalInfo["priority"].(string); ok {
 		switch priority {
 		case "high":
 			processingTime = 1 * time.Second
@@ -224,23 +218,29 @@ func handleStreamAdded(ctx context.Context, client types.RedisStreamClient, payl
 	processedStreams.Store(streamName, time.Now())
 	*streamCount++
 
-	// In a real application, you would call client.DoneStream() when finished
-	// For this demo, we'll simulate completion
-	slog.Info("✅ Completed processing stream", "consumer_id", consumerID, "stream_name", streamName, "processing_time", processingTime)
+	// Mark stream as done after processing
+	if err := client.DoneStream(ctx, streamName); err != nil {
+		slog.Error("Failed to mark stream done", "error", err, "stream", streamName, "consumer_id", consumerID)
+	} else {
+		slog.Info("✅ Completed processing stream", "consumer_id", consumerID, "stream_name", streamName, "processing_time", processingTime)
+	}
 }
 
-func handleClaimedStream(ctx context.Context, client types.RedisStreamClient, payload string, processedStreams *sync.Map, streamCount *int32) {
-	// Extract stream name from the payload (format: "stream_name:message_id")
-	// For this demo, we'll just log that we claimed it
-	slog.Info("🔄 Processing claimed stream", "consumer_id", client.ID(), "payload", payload)
+func handleClaimedStream(ctx context.Context, client types.RedisStreamClient, streamName string, processedStreams *sync.Map, streamCount *int32) {
+	slog.Info("🔄 Processing claimed stream", "consumer_id", client.ID(), "stream_name", streamName)
 
 	// Simulate processing the claimed stream
 	time.Sleep(1 * time.Second)
 
-	processedStreams.Store(payload, time.Now())
+	processedStreams.Store(streamName, time.Now())
 	*streamCount++
 
-	slog.Info("✅ Completed processing claimed stream", "consumer_id", client.ID(), "payload", payload)
+	// Mark stream as done after processing
+	if err := client.DoneStream(ctx, streamName); err != nil {
+		slog.Error("Failed to mark claimed stream done", "error", err, "stream", streamName, "consumer_id", client.ID())
+	} else {
+		slog.Info("✅ Completed processing claimed stream", "consumer_id", client.ID(), "stream_name", streamName)
+	}
 }
 
 func printStatistics(ctx context.Context, consumerID string, processedStreams *sync.Map, streamCount *int32) {

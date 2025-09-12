@@ -2,11 +2,13 @@ package impl
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -18,6 +20,13 @@ import (
 	"github.com/handcoding-labs/redis-stream-client-go/notifs"
 	"github.com/handcoding-labs/redis-stream-client-go/types"
 )
+
+// StreamLocksInfo holds information needed to operation with data streams and their management for synchronization
+type StreamLocksInfo struct {
+	LBSInfo        notifs.LBSInfo
+	Mutex          *redsync.Mutex
+	AdditionalInfo map[string]any
+}
 
 // RecoverableRedisStreamClient is an implementation of the RedisStreamClient interface
 type RecoverableRedisStreamClient struct {
@@ -32,13 +41,15 @@ type RecoverableRedisStreamClient struct {
 	// hbInterval is the interval at which the client sends heartbeats
 	hbInterval time.Duration
 	// streamLocks is a map of stream name to LBSInfo for locking
-	streamLocks map[string]*lbsInfo
+	streamLocks map[string]*StreamLocksInfo
+	// streamLocksMutex protects streamLocks map from concurrent access
+	streamLocksMutex sync.RWMutex
 	// serviceName is the name of the service
 	serviceName string
 	// redis pub sub subscription
 	pubSub *redis.PubSub
 	// outputChan is the channel exposed to clients on which we relay all messages
-	outputChan chan notifs.RecoverableRedisNotification[any]
+	outputChan chan notifs.RecoverableRedisNotification
 	// outputChanClosed tracks if the outputChan is still being read by client
 	outputChanClosed atomic.Bool
 	// rs is a shared redsync instance used for distributed locks
@@ -82,9 +93,9 @@ func NewRedisStreamClient(
 		consumerID:       consumerID,
 		kspChan:          make(chan *redis.Message, 500),
 		hbInterval:       configs.DefaultHBInterval,
-		streamLocks:      make(map[string]*lbsInfo),
+		streamLocks:      make(map[string]*StreamLocksInfo),
 		serviceName:      serviceName,
-		outputChan:       make(chan notifs.RecoverableRedisNotification[any], 500),
+		outputChan:       make(chan notifs.RecoverableRedisNotification, 500),
 		outputChanClosed: atomic.Bool{},
 		rs:               rs,
 		lbsIdleTime:      configs.DefaultLBSIdleTime,
@@ -113,7 +124,7 @@ func (r *RecoverableRedisStreamClient) ID() string {
 // process the messages.
 func (r *RecoverableRedisStreamClient) Init(
 	ctx context.Context,
-) (<-chan notifs.RecoverableRedisNotification[any], error) {
+) (<-chan notifs.RecoverableRedisNotification, error) {
 	keyspaceErr := r.enableKeyspaceNotifsForExpiredEvents(ctx)
 	if keyspaceErr != nil {
 		return nil, fmt.Errorf("error while enabling keyspace notifications for expired events: %w", keyspaceErr)
@@ -146,14 +157,9 @@ func (r *RecoverableRedisStreamClient) Init(
 }
 
 // Claim claims pending messages from a stream
-func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, mutexKey string) error {
-	slog.Info("claiming stream", "consumer_id", r.consumerID, "mutex_key", mutexKey,
+func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs.LBSInfo) error {
+	slog.Info("claiming stream", "consumer_id", r.consumerID, "mutex_key", lbsInfo,
 		"timestamp", time.Now().Format(time.RFC3339))
-
-	lbsInfo, err := createByMutexKey(mutexKey)
-	if err != nil {
-		return err
-	}
 
 	// Claim the stream
 	res := r.redisClient.XClaim(ctx, &redis.XClaimArgs{
@@ -171,7 +177,8 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, mutexKey strin
 
 	claimed, err := res.Result()
 	if err != nil {
-		slog.Error("error getting claimed stream", "error", err, "consumer_id", r.consumerID, "mutex_key", mutexKey)
+		slog.Error("error getting claimed stream", "error", err, "consumer_id", r.consumerID,
+			"mutex_key", lbsInfo.FormMutexKey())
 		return err
 	}
 
@@ -179,7 +186,7 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, mutexKey strin
 		return fmt.Errorf("already claimed")
 	}
 
-	mutex := r.rs.NewMutex(lbsInfo.getMutexKey(),
+	mutex := r.rs.NewMutex(lbsInfo.FormMutexKey(),
 		redsync.WithExpiry(r.hbInterval),
 		redsync.WithFailFast(true),
 		redsync.WithRetryDelay(10*time.Millisecond),
@@ -193,15 +200,31 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, mutexKey strin
 		return err
 	}
 
+	// Retrieve the original message to get AdditionalInfo
+	var additionalInfo map[string]any
+	if len(claimed) > 0 {
+		if lbsInputStr, ok := claimed[0].Values[configs.LBSInput].(string); ok {
+			var lbsMessage notifs.LBSInputMessage
+			if err := json.Unmarshal([]byte(lbsInputStr), &lbsMessage); err == nil {
+				additionalInfo = lbsMessage.Info
+			}
+		}
+	}
+
 	go func() {
-		if err := r.startExtendingKey(ctx, mutex, lbsInfo.DataStreamName); err != nil {
+		if err := r.startExtendingKey(ctx, mutex, lbsInfo, additionalInfo); err != nil {
 			slog.Error("Error extending key", "error", err, "stream", lbsInfo.DataStreamName, "consumer_id", r.consumerID)
 		}
 	}()
 
-	// seed the mutex
-	lbsInfo.Mutex = mutex
-	r.streamLocks[lbsInfo.DataStreamName] = lbsInfo
+	// populate StreamLocks info
+	r.streamLocksMutex.Lock()
+	r.streamLocks[lbsInfo.DataStreamName] = &StreamLocksInfo{
+		LBSInfo:        lbsInfo,
+		Mutex:          mutex,
+		AdditionalInfo: additionalInfo,
+	}
+	r.streamLocksMutex.Unlock()
 
 	return nil
 }
@@ -211,24 +234,25 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, mutexKey strin
 // This function is used to mark the end of processing for a particular stream
 // It unlocks the stream and acknowledges the message and cleans up internal state
 func (r *RecoverableRedisStreamClient) DoneStream(ctx context.Context, dataStreamName string) error {
-	lbsInfo, ok := r.streamLocks[dataStreamName]
+	r.streamLocksMutex.Lock()
+	streamLocksInfo, ok := r.streamLocks[dataStreamName]
 	if !ok {
+		r.streamLocksMutex.Unlock()
 		return fmt.Errorf("stream not found")
 	}
 
 	// delete volatile key from streamLocks
-	if ok {
-		delete(r.streamLocks, dataStreamName)
-	}
+	delete(r.streamLocks, dataStreamName)
+	r.streamLocksMutex.Unlock()
 
 	// unlock the stream
-	_, err := lbsInfo.Mutex.Unlock()
+	_, err := streamLocksInfo.Mutex.Unlock()
 	if err != nil && !errors.Is(errors.Unwrap(err), redsync.ErrLockAlreadyExpired) {
 		return err
 	}
 
 	// Acknowledge the message
-	res := r.redisClient.XAck(ctx, r.lbsName(), r.lbsGroupName(), lbsInfo.IDInLBS)
+	res := r.redisClient.XAck(ctx, r.lbsName(), r.lbsGroupName(), streamLocksInfo.LBSInfo.IDInLBS)
 	if res.Err() != nil {
 		return res.Err()
 	}
@@ -244,7 +268,15 @@ func (r *RecoverableRedisStreamClient) DoneStream(ctx context.Context, dataStrea
 func (r *RecoverableRedisStreamClient) Done() error {
 	ctx := context.Background()
 
+	// Get all stream names first to avoid holding lock during DoneStream calls
+	r.streamLocksMutex.RLock()
+	streamNames := make([]string, 0, len(r.streamLocks))
 	for streamName := range r.streamLocks {
+		streamNames = append(streamNames, streamName)
+	}
+	r.streamLocksMutex.RUnlock()
+
+	for _, streamName := range streamNames {
 		if err := r.DoneStream(ctx, streamName); err != nil {
 			return err
 		}
