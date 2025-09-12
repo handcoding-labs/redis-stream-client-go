@@ -91,15 +91,17 @@ for notification := range outputChan {
     switch notification.Type {
     case notifs.StreamAdded:
         // Handle new stream assignment
-        handleStreamAdded(ctx, notification.Payload.(string))
+        // notification.Payload contains LBSInfo with DataStreamName and IDInLBS
+        // notification.AdditionalInfo contains the Info field from LBSInputMessage
+        handleStreamAdded(ctx, notification)
         
     case notifs.StreamExpired:
         // Claim stream from failed consumer
-        client.Claim(ctx, notification.Payload.(string))
+        client.Claim(ctx, notification.Payload)
         
     case notifs.StreamDisowned:
         // Handle losing stream ownership
-        handleStreamDisowned(notification.Payload.(string))
+        handleStreamDisowned(notification)
     }
 }
 ```
@@ -124,6 +126,8 @@ client.Done()
 - The library uses a special Redis stream called the "Load Balancer Stream"
 - Stream names are distributed among consumers in a round-robin fashion
 - Each consumer gets assigned different data streams to process
+- Messages are added to LBS using the `LBSInputMessage` structure with `DataStreamName` and `Info` fields
+- The `Info` field allows passing additional metadata that becomes available in `AdditionalInfo`
 
 ### Notifications
 - **StreamAdded**: A new data stream has been assigned to this consumer

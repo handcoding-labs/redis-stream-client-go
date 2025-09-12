@@ -11,20 +11,23 @@ const (
 
 // RecoverableRedisNotification captures the type of notifications sent to client.
 // These are captured by NotificationType enum.
-type RecoverableRedisNotification[T any] struct {
+type RecoverableRedisNotification struct {
 	Type    NotificationType
-	Payload T
+	Payload LBSInfo
+	// AdditionalInfo is an echo from any additional data seeded in LBSInputMessage
+	AdditionalInfo map[string]any
 }
 
 // LBSMessage is the format in which the message should be written to LBS
-type LBSMessage struct {
+type LBSInputMessage struct {
 	DataStreamName string
 	Info           map[string]interface{}
 }
 
-func Make(value any, notifType NotificationType) RecoverableRedisNotification[any] {
-	return RecoverableRedisNotification[any]{
-		Type:    notifType,
-		Payload: value,
+func Make(notifType NotificationType, lbsInfo LBSInfo, additionalInfo map[string]any) RecoverableRedisNotification {
+	return RecoverableRedisNotification{
+		Type:           notifType,
+		Payload:        lbsInfo,
+		AdditionalInfo: additionalInfo,
 	}
 }
