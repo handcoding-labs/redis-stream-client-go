@@ -18,11 +18,11 @@ type RedisStreamClient interface {
 	// 		   the key space notifications (ksp) channel. This channel should be used by consumers
 	// to find out if any of the streams has expired. All notifications will come to kspchan.
 	// 		   error if there is any in initialization
-	Init(ctx context.Context) (outputChan <-chan notifs.RecoverableRedisNotification[any], err error)
+	Init(ctx context.Context) (outputChan <-chan notifs.RecoverableRedisNotification, err error)
 	// Claim allows for a consumer to claim data stream from another failed consumer
 	//
 	// should be called once a consumer receives a message on kspchan
-	Claim(ctx context.Context, kspNotification string) error
+	Claim(ctx context.Context, kspNotification notifs.LBSInfo) error
 	// Done marks the end of processing the stream
 	//
 	// should be called when consumer is shutting down and is not expected to be called again.

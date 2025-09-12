@@ -72,11 +72,11 @@ func main() {
 			switch notification.Type {
 			case notifs.StreamAdded:
 				slog.Info("🎉 New stream added", "payload", notification.Payload)
-				handleStreamAdded(ctx, notification.Payload.(string))
+				handleStreamAdded(ctx, notification)
 
 			case notifs.StreamExpired:
 				slog.Warn("⚠️  Stream expired", "payload", notification.Payload)
-				if err := client.Claim(ctx, notification.Payload.(string)); err != nil {
+				if err := client.Claim(ctx, notification.Payload); err != nil {
 					slog.Error("Failed to claim expired stream", "error", err)
 				} else {
 					slog.Info("✅ Successfully claimed expired stream")
@@ -85,7 +85,7 @@ func main() {
 			case notifs.StreamDisowned:
 				slog.Warn("❌ Stream disowned", "payload", notification.Payload)
 				// Handle losing ownership of a stream
-				handleStreamDisowned(notification.Payload.(string))
+				handleStreamDisowned(notification)
 
 			default:
 				slog.Warn("Unknown notification type", "type", notification.Type)
@@ -116,7 +116,7 @@ func addTestData(ctx context.Context, redisClient redis.UniversalClient) {
 
 	for i := 0; i < 3; i++ {
 		// Create a test message for the LBS
-		lbsMessage := notifs.LBSMessage{
+		lbsMessage := notifs.LBSInputMessage{
 			DataStreamName: fmt.Sprintf("user-session-%d", i),
 			Info: map[string]interface{}{
 				"user_id":    fmt.Sprintf("user-%d", i),
@@ -153,14 +153,8 @@ func addTestData(ctx context.Context, redisClient redis.UniversalClient) {
 }
 
 // handleStreamAdded processes a newly assigned stream
-func handleStreamAdded(ctx context.Context, payload string) {
-	var lbsMessage notifs.LBSMessage
-	if err := json.Unmarshal([]byte(payload), &lbsMessage); err != nil {
-		slog.Error("Failed to unmarshal LBS message", "error", err)
-		return
-	}
-
-	slog.Info("Processing stream", "stream_name", lbsMessage.DataStreamName, "stream_info", lbsMessage.Info)
+func handleStreamAdded(ctx context.Context, lbsInfo notifs.RecoverableRedisNotification) {
+	slog.Info("Processing stream", "stream_name", lbsInfo.Payload.DataStreamName, "stream_info", lbsInfo.AdditionalInfo)
 
 	// Simulate processing the data stream
 	// In a real application, you would:
@@ -169,12 +163,20 @@ func handleStreamAdded(ctx context.Context, payload string) {
 	// 3. Acknowledge processed messages
 	// 4. Call client.DoneStream() when finished with this stream
 
-	slog.Info("✅ Finished processing stream", "stream_name", lbsMessage.DataStreamName)
+	// Simulate some processing time
+	time.Sleep(1 * time.Second)
+
+	slog.Info("✅ Finished processing stream", "stream_name", lbsInfo.Payload.DataStreamName)
+
+	// IMPORTANT: In a real application, you must call DoneStream when finished
+	// For this demo, we're not calling it to keep streams active for demonstration
+	// Uncomment the line below in production:
+	// client.DoneStream(ctx, lbsInfo.Payload.DataStreamName)
 }
 
 // handleStreamDisowned handles losing ownership of a stream
-func handleStreamDisowned(payload string) {
-	slog.Info("Lost ownership of stream, stopping processing", "payload", payload)
+func handleStreamDisowned(notification notifs.RecoverableRedisNotification) {
+	slog.Info("Lost ownership of stream, stopping processing", "payload", notification.Payload)
 	// In a real application, you would:
 	// 1. Stop processing the stream
 	// 2. Clean up any resources

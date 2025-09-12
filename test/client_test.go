@@ -86,19 +86,17 @@ func TestLBS(t *testing.T) {
 			case notifs.StreamAdded:
 				require.True(t, ok)
 				require.NotNil(t, msg)
-				var lbsMessage notifs.LBSMessage
-				require.NoError(t, json.Unmarshal([]byte(msg.Payload.(string)), &lbsMessage))
-				require.NotNil(t, lbsMessage)
+				require.NotNil(t, msg.Payload)
 
 				if expectedMsgConsumer1 != "" {
-					require.Equal(t, lbsMessage.DataStreamName, expectedMsgConsumer1)
+					require.Equal(t, msg.Payload.DataStreamName, expectedMsgConsumer1)
 				} else {
-					if lbsMessage.DataStreamName == "session0" {
+					if msg.Payload.DataStreamName == "session0" {
 						expectedMsgConsumer2 = "session1"
-						require.Equal(t, lbsMessage.Info["key0"], "value0")
+						require.Equal(t, msg.AdditionalInfo["key0"], "value0")
 					} else {
 						expectedMsgConsumer2 = "session0"
-						require.Equal(t, lbsMessage.Info["key1"], "value1")
+						require.Equal(t, msg.AdditionalInfo["key1"], "value1")
 					}
 				}
 			}
@@ -107,18 +105,16 @@ func TestLBS(t *testing.T) {
 			case notifs.StreamAdded:
 				require.True(t, ok)
 				require.NotNil(t, msg)
-				var lbsMessage notifs.LBSMessage
-				require.NoError(t, json.Unmarshal([]byte(msg.Payload.(string)), &lbsMessage))
-				require.NotNil(t, lbsMessage)
+				require.NotNil(t, msg.Payload)
 				if expectedMsgConsumer2 != "" {
-					require.Equal(t, lbsMessage.DataStreamName, expectedMsgConsumer2)
+					require.Equal(t, msg.Payload.DataStreamName, expectedMsgConsumer2)
 				} else {
-					if lbsMessage.DataStreamName == "session0" {
+					if msg.Payload.DataStreamName == "session0" {
 						expectedMsgConsumer1 = "session1"
-						require.Equal(t, lbsMessage.Info["key0"], "value0")
+						require.Equal(t, msg.AdditionalInfo["key0"], "value0")
 					} else {
 						expectedMsgConsumer1 = "session0"
-						require.Equal(t, lbsMessage.Info["key1"], "value1")
+						require.Equal(t, msg.AdditionalInfo["key1"], "value1")
 					}
 				}
 			}
@@ -241,9 +237,12 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	}
 	require.NotEmpty(t, actualMutexKey, "Could not find pending message for consumer1")
 
-	err = consumer2.Claim(ctxWOCancel, actualMutexKey)
+	mutexKey1, err := notifs.CreateByKspNotification(actualMutexKey)
 	require.NoError(t, err)
-	err = consumer3.Claim(ctxWOCancel, actualMutexKey)
+	err = consumer2.Claim(ctxWOCancel, mutexKey1)
+	mutexKey2, err := notifs.CreateByKspNotification(actualMutexKey)
+	require.NoError(t, err)
+	err = consumer3.Claim(ctxWOCancel, mutexKey2)
 	require.Error(t, err)
 	require.Equal(t, err, fmt.Errorf("already claimed"))
 
@@ -342,7 +341,7 @@ func TestKspNotifsBulk(t *testing.T) {
 
 	consumers := make(map[int]types.RedisStreamClient)
 	cancelFuncs := make(map[int]context.CancelFunc)
-	var outputChans []<-chan notifs.RecoverableRedisNotification[any]
+	var outputChans []<-chan notifs.RecoverableRedisNotification
 
 	for i := 0; i < totalConsumers; i++ {
 		ctxWithCancel := context.TODO()
@@ -485,11 +484,9 @@ func TestMainFlow(t *testing.T) {
 				case notifs.StreamAdded:
 					require.True(t, ok)
 					require.NotNil(t, msg)
-					var lbsMessage notifs.LBSMessage
-					require.NoError(t, json.Unmarshal([]byte(msg.Payload.(string)), &lbsMessage))
-					require.NotNil(t, lbsMessage)
-					require.Contains(t, lbsMessage.DataStreamName, "session")
-					require.Contains(t, lbsMessage.Info["key0"], "value")
+					require.NotNil(t, msg.Payload)
+					require.Contains(t, msg.Payload.DataStreamName, "session")
+					require.Contains(t, msg.AdditionalInfo["key0"], "value")
 					streamsPickedup++
 				}
 			}
@@ -499,11 +496,9 @@ func TestMainFlow(t *testing.T) {
 				case notifs.StreamAdded:
 					require.True(t, ok)
 					require.NotNil(t, msg)
-					var lbsMessage notifs.LBSMessage
-					require.NoError(t, json.Unmarshal([]byte(msg.Payload.(string)), &lbsMessage))
-					require.NotNil(t, lbsMessage)
-					require.Contains(t, lbsMessage.DataStreamName, "session")
-					require.Contains(t, lbsMessage.Info["key1"], "value")
+					require.NotNil(t, msg.Payload)
+					require.Contains(t, msg.Payload.DataStreamName, "session")
+					require.Contains(t, msg.AdditionalInfo["key1"], "value")
 					streamsPickedup++
 				}
 			}
@@ -549,8 +544,8 @@ func TestMainFlow(t *testing.T) {
 				require.True(t, consumer1Crashed)
 				require.True(t, ok)
 				require.NotNil(t, notif)
-				require.Contains(t, notif.Payload, "session")
-				err = consumer2.Claim(consumer2Ctx, notif.Payload.(string))
+				require.Contains(t, notif.Payload.DataStreamName, "session")
+				err = consumer2.Claim(consumer2Ctx, notif.Payload)
 				require.NoError(t, err)
 				res := simpleRedisClient.XInfoStreamFull(context.Background(), "consumer-input", 100)
 				require.NotNil(t, res)
@@ -615,7 +610,7 @@ func addNStreamsToLBS(t *testing.T, redisContainer *redis.RedisContainer, n int)
 	defer producer.Close()
 
 	for i := 0; i < n; i++ {
-		lbsMsg, err := json.Marshal(notifs.LBSMessage{
+		lbsMsg, err := json.Marshal(notifs.LBSInputMessage{
 			DataStreamName: stringify("session", i),
 			Info: map[string]interface{}{
 				stringify("key", i): stringify("value", i),
@@ -639,15 +634,14 @@ func createConsumer(name string, redisContainer *redis.RedisContainer) types.Red
 	return impl.NewRedisStreamClient(newRedisClient(redisContainer), "consumer")
 }
 
-func listenToKsp(t *testing.T, outputChan <-chan notifs.RecoverableRedisNotification[any], consumers map[int]types.RedisStreamClient, i int) {
+func listenToKsp(t *testing.T, outputChan <-chan notifs.RecoverableRedisNotification, consumers map[int]types.RedisStreamClient, i int) {
 	for notif := range outputChan {
 		switch notif.Type {
 		case notifs.StreamExpired:
 			require.NotNil(t, notif)
-			streamThatExpired, ok := notif.Payload.(string)
-			require.True(t, ok)
+			streamThatExpired := notif.Payload.DataStreamName
 			require.Contains(t, streamThatExpired, "session")
-			err := consumers[i].Claim(context.Background(), streamThatExpired)
+			err := consumers[i].Claim(context.Background(), notif.Payload)
 			if err != nil {
 				continue
 			}
