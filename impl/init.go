@@ -118,17 +118,17 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(
 			// has to be an LBS message
 			v, ok := message.Values[configs.LBSInput]
 			if !ok {
-				return fmt.Errorf("invalid message on LBS stream, must be an LBS message type")
+				return fmt.Errorf("message on LBS stream must be keyed with %s", configs.LBSInput)
 			}
 
 			// unmarshal the message
 			var lbsMessage notifs.LBSInputMessage
 			if err := json.Unmarshal([]byte(v.(string)), &lbsMessage); err != nil {
-				return fmt.Errorf("error while unmarshalling LBS message")
+				return fmt.Errorf("error while unmarshalling LBS message: %w", err)
 			}
 
 			if lbsMessage.DataStreamName == "" {
-				return fmt.Errorf("invalid message type on LBS")
+				return fmt.Errorf("no data stream specified in LBS message")
 			}
 
 			lbsInfo, err := notifs.CreateByParts(lbsMessage.DataStreamName, message.ID)
