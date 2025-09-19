@@ -187,7 +187,6 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 	}()
 
 	for {
-
 		// exit extending the key if:
 		// main context is canceled
 		if r.isContextDone(ctx) {
