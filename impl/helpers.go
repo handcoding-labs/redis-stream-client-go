@@ -37,3 +37,9 @@ func (r *RecoverableRedisStreamClient) isContextDone(ctx context.Context) bool {
 		return false
 	}
 }
+
+func (r *RecoverableRedisStreamClient) isStreamProcessingDone(dataStreamName string) bool {
+	r.streamLocksMutex.Lock()
+	defer r.streamLocksMutex.Unlock()
+	return r.streamLocks[dataStreamName] == nil
+}

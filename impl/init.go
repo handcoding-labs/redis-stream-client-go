@@ -187,8 +187,16 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 	}()
 
 	for {
+		// exit extending the key if:
+		// main context is canceled
 		if r.isContextDone(ctx) {
 			slog.Debug("context done, exiting", "consumer_id", r.consumerID)
+			return nil
+		}
+
+		// or if DoneStream was called
+		if r.isStreamProcessingDone(lbsInfo.DataStreamName) {
+			slog.Debug("DoneStream called. Stopping key extension.")
 			return nil
 		}
 
