@@ -231,7 +231,7 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	var actualMutexKey string
 	for _, c := range grp.Consumers {
 		if c.Name == "redis-consumer-111" && len(c.Pending) > 0 {
-			actualMutexKey = fmt.Sprintf("session0:%s", c.Pending[0].ID)
+			actualMutexKey = fmt.Sprintf("session0<MUTEX_KEY_SEP>%s", c.Pending[0].ID)
 			break
 		}
 	}
@@ -240,6 +240,7 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	mutexKey1, err := notifs.CreateByKspNotification(actualMutexKey)
 	require.NoError(t, err)
 	err = consumer2.Claim(ctxWOCancel, mutexKey1)
+	require.NoError(t, err)
 	mutexKey2, err := notifs.CreateByKspNotification(actualMutexKey)
 	require.NoError(t, err)
 	err = consumer3.Claim(ctxWOCancel, mutexKey2)
