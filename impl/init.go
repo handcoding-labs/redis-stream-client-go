@@ -177,7 +177,9 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(
 				AdditionalInfo: lbsMessage.Info,
 			}
 			r.streamLocksMutex.Unlock()
-			r.outputChan <- notifs.Make(notifs.StreamAdded, lbsInfo, lbsMessage.Info)
+			if !r.outputChanClosed.Load() {
+				r.outputChan <- notifs.Make(notifs.StreamAdded, lbsInfo, lbsMessage.Info)
+			}
 
 			// now, keep extending the lock in a separate go routine
 			go func() {
