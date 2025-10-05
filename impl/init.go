@@ -102,7 +102,6 @@ func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
 			if errors.Is(res.Err(), context.Canceled) {
 				r.outputChan <- notifs.MakeStreamTerminatedNotif(context.Canceled.Error())
 				return
-
 			}
 			slog.Error("error while reading from LBS", "error", res.Err())
 			r.outputChan <- notifs.MakeStreamTerminatedNotif(res.Err().Error())
