@@ -7,6 +7,7 @@ const (
 	StreamAdded NotificationType = iota
 	StreamDisowned
 	StreamExpired
+	StreamTerminated
 )
 
 // RecoverableRedisNotification captures the type of notifications sent to client.
@@ -29,5 +30,15 @@ func Make(notifType NotificationType, lbsInfo LBSInfo, additionalInfo map[string
 		Type:           notifType,
 		Payload:        lbsInfo,
 		AdditionalInfo: additionalInfo,
+	}
+}
+
+func MakeStreamTerminatedNotif(info string) RecoverableRedisNotification {
+	return RecoverableRedisNotification{
+		Type:    StreamTerminated,
+		Payload: LBSInfo{},
+		AdditionalInfo: map[string]any{
+			"info": info,
+		},
 	}
 }
