@@ -86,10 +86,7 @@ func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
 	for {
 		// check if context is done
 		if r.isContextDone(ctx) {
-			if !r.outputChanClosed.Load() {
-				r.outputChan <- notifs.MakeStreamTerminatedNotif("context done")
-				r.closeOutputChan()
-			}
+			r.outputChan <- notifs.MakeStreamTerminatedNotif("context done")
 			return
 		}
 
@@ -103,25 +100,18 @@ func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
 
 		if res.Err() != nil {
 			if errors.Is(res.Err(), context.Canceled) {
-				if !r.outputChanClosed.Load() {
-					r.outputChan <- notifs.MakeStreamTerminatedNotif(context.Canceled.Error())
-					return
-				}
+				r.outputChan <- notifs.MakeStreamTerminatedNotif(context.Canceled.Error())
+				return
+
 			}
 			slog.Error("error while reading from LBS", "error", res.Err())
-			if !r.outputChanClosed.Load() {
-				r.outputChan <- notifs.MakeStreamTerminatedNotif(res.Err().Error())
-				r.closeOutputChan()
-			}
+			r.outputChan <- notifs.MakeStreamTerminatedNotif(res.Err().Error())
 			return
 		}
 
 		if err := r.processLBSMessages(ctx, res.Val(), r.rs); err != nil {
 			slog.Error("fatal error while reading lbs", "error", err)
-			if !r.outputChanClosed.Load() {
-				r.outputChan <- notifs.MakeStreamTerminatedNotif(err.Error())
-				r.closeOutputChan()
-			}
+			r.outputChan <- notifs.MakeStreamTerminatedNotif(err.Error())
 			return
 		}
 	}
@@ -238,10 +228,7 @@ func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			slog.Debug("context done, exiting", "consumer_id", r.consumerID)
-			if !r.outputChanClosed.Load() {
-				r.outputChan <- notifs.MakeStreamTerminatedNotif("context done")
-				r.closeOutputChan()
-			}
+			r.outputChan <- notifs.MakeStreamTerminatedNotif("context done")
 			return
 		case kspNotif := <-r.kspChan:
 			if kspNotif != nil {
@@ -249,10 +236,7 @@ func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
 				lbsInfo, err := notifs.CreateByKspNotification(kspNotif.Payload)
 				if err != nil {
 					slog.Error("error parsing ksp notification", "ksp_notification", kspNotif)
-					if !r.outputChanClosed.Load() {
-						r.outputChan <- notifs.MakeStreamTerminatedNotif(err.Error())
-						r.closeOutputChan()
-					}
+					r.outputChan <- notifs.MakeStreamTerminatedNotif(err.Error())
 					return
 				}
 
@@ -270,9 +254,7 @@ func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
 			// this means that the client has called Done and is no longer interested in expired notifications
 			if r.outputChanClosed.Load() {
 				slog.Debug("output channel closed, exiting", "consumer_id", r.consumerID)
-				if !r.outputChanClosed.Load() {
-					r.outputChan <- notifs.MakeStreamTerminatedNotif("output channel closed")
-				}
+				r.outputChan <- notifs.MakeStreamTerminatedNotif("output channel closed")
 				// don't close the r.outputChan here as it's already closed
 				return
 			}
