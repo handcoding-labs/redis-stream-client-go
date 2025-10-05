@@ -30,6 +30,7 @@ func (r *RecoverableRedisStreamClient) isStreamProcessingDone(dataStreamName str
 }
 
 func (r *RecoverableRedisStreamClient) closeOutputChan() {
-	close(r.outputChan)
-	r.outputChanClosed.Store(true)
+	if r.outputChanClosed.CompareAndSwap(false, true) {
+		close(r.outputChan)
+	}
 }
