@@ -228,7 +228,9 @@ func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			slog.Debug("context done, exiting", "consumer_id", r.consumerID)
-			r.outputChan <- notifs.MakeStreamTerminatedNotif("context done")
+			if !r.outputChanClosed.Load() {
+				r.outputChan <- notifs.MakeStreamTerminatedNotif("context done")
+			}
 			return
 		case kspNotif := <-r.kspChan:
 			if kspNotif != nil {
