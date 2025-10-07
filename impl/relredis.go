@@ -301,13 +301,11 @@ func (r *RecoverableRedisStreamClient) cleanup() error {
 		<-r.kspChan
 	}
 
+	// close the output channel
+	r.closeOutputChan()
+
 	// cancel LBS context
 	r.lbsCtxCancelFunc()
-
-	// close the output channel
-	if r.outputChanClosed.CompareAndSwap(false, true) {
-		close(r.outputChan)
-	}
 
 	return nil
 }
