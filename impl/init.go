@@ -244,11 +244,8 @@ func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
 				slog.Debug("ksp notif received", "consumer_id", r.consumerID, "payload", kspNotif.Payload)
 				lbsInfo, err := notifs.CreateByKspNotification(kspNotif.Payload)
 				if err != nil {
-					slog.Error("error parsing ksp notification", "ksp_notification", kspNotif)
-					if !r.outputChanClosed.Load() {
-						r.outputChan <- notifs.MakeStreamTerminatedNotif(err.Error())
-					}
-					return
+					slog.Warn("error parsing ksp notification", "ksp_notification", kspNotif)
+					continue
 				}
 
 				// Try to get additional info from stored stream locks
@@ -267,10 +264,6 @@ func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
 			// this means that the client has called Done and is no longer interested in expired notifications
 			if r.outputChanClosed.Load() {
 				slog.Debug("output channel closed, exiting", "consumer_id", r.consumerID)
-				if !r.outputChanClosed.Load() {
-					r.outputChan <- notifs.MakeStreamTerminatedNotif("output channel closed")
-				}
-				// don't close the r.outputChan here as it's already closed
 				return
 			}
 		}
