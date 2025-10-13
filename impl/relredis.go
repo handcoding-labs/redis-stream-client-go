@@ -58,6 +58,8 @@ type RecoverableRedisStreamClient struct {
 	lbsIdleTime time.Duration
 	// lbsRecoveryCount is the number of times a message is recovered
 	lbsRecoveryCount int
+	// logger for plain json logging
+	logger *slog.Logger
 }
 
 // NewRedisStreamClient creates a new RedisStreamClient
@@ -100,6 +102,7 @@ func NewRedisStreamClient(
 		rs:               rs,
 		lbsIdleTime:      configs.DefaultLBSIdleTime,
 		lbsRecoveryCount: configs.DefaultLBSRecoveryCount,
+		logger:           slog.New(slog.NewJSONHandler(os.Stdout, nil)),
 	}
 
 	for _, opt := range opts {
@@ -158,7 +161,7 @@ func (r *RecoverableRedisStreamClient) Init(
 
 // Claim claims pending messages from a stream
 func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs.LBSInfo) error {
-	slog.Info("claiming stream", "consumer_id", r.consumerID, "mutex_key", lbsInfo,
+	r.logger.Info("claiming stream", "consumer_id", r.consumerID, "mutex_key", lbsInfo,
 		"timestamp", time.Now().Format(time.RFC3339))
 
 	// Claim the stream
@@ -171,13 +174,13 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs
 	})
 
 	if res.Err() != nil {
-		slog.Error("error claiming stream", "error", res.Err(), "consumer_id", r.consumerID)
+		r.logger.Error("error claiming stream", "error", res.Err(), "consumer_id", r.consumerID)
 		return res.Err()
 	}
 
 	claimed, err := res.Result()
 	if err != nil {
-		slog.Error("error getting claimed stream", "error", err, "consumer_id", r.consumerID,
+		r.logger.Error("error getting claimed stream", "error", err, "consumer_id", r.consumerID,
 			"mutex_key", lbsInfo.FormMutexKey())
 		return err
 	}
@@ -213,7 +216,7 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs
 
 	go func() {
 		if err := r.startExtendingKey(ctx, mutex, lbsInfo, additionalInfo); err != nil {
-			slog.Error("Error extending key", "error", err, "stream", lbsInfo.DataStreamName, "consumer_id", r.consumerID)
+			r.logger.Error("Error extending key", "error", err, "stream", lbsInfo.DataStreamName, "consumer_id", r.consumerID)
 		}
 	}()
 
