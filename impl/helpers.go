@@ -2,6 +2,8 @@ package impl
 
 import (
 	"context"
+	"log/slog"
+	"os"
 
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
 )
@@ -33,4 +35,39 @@ func (r *RecoverableRedisStreamClient) closeOutputChan() {
 	if r.outputChanClosed.CompareAndSwap(false, true) {
 		close(r.outputChan)
 	}
+}
+
+// getGoogleCloudLogger returns a slog.Logger that writes to stdout.
+// This logger is compatible with Google Cloud Logging; see
+// https://cloud.google.com/logging/docs/structured-logging for more
+// details on structured logging that Cloud Logging expects.
+func getGoogleCloudLogger() *slog.Logger {
+	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			switch a.Key {
+			case slog.LevelKey:
+				a.Key = "severity"
+				if level, ok := a.Value.Any().(slog.Level); ok {
+					switch level {
+					case slog.LevelDebug:
+						a.Value = slog.StringValue("DEBUG")
+					case slog.LevelInfo:
+						a.Value = slog.StringValue("INFO")
+					case slog.LevelWarn:
+						a.Value = slog.StringValue("WARNING")
+					case slog.LevelError:
+						a.Value = slog.StringValue("ERROR")
+					default:
+						a.Value = slog.StringValue("DEFAULT")
+					}
+				}
+			case slog.TimeKey:
+				a.Key = "timestamp"
+			case slog.MessageKey:
+				a.Key = "message"
+			}
+			return a
+		},
+		Level: slog.LevelDebug,
+	}))
 }
