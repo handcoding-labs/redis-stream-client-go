@@ -102,7 +102,7 @@ func NewRedisStreamClient(
 		rs:               rs,
 		lbsIdleTime:      configs.DefaultLBSIdleTime,
 		lbsRecoveryCount: configs.DefaultLBSRecoveryCount,
-		logger:           slog.New(slog.NewJSONHandler(os.Stdout, nil)),
+		logger:           getGoogleCloudLogger(),
 	}
 
 	for _, opt := range opts {
