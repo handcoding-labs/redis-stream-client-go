@@ -163,7 +163,8 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(
 
 			// lock only once
 			if err := mutex.Lock(); err != nil {
-				return err
+				r.logger.Warn("could not lock mutex for stream", "stream", lbsInfo.DataStreamName, "error", err)
+				continue
 			}
 
 			r.streamLocksMutex.Lock()
