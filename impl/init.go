@@ -83,12 +83,11 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
 }
 
 func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
+	defer r.wg.Done()
 	for {
 		// check if context is done
 		if r.isContextDone(ctx) {
-			if !r.outputChanClosed.Load() {
-				r.outputChan <- notifs.MakeStreamTerminatedNotif("context done")
-			}
+			r.checkAndSendToOutputChan(notifs.MakeStreamTerminatedNotif("context done"))
 			return
 		}
 
@@ -102,23 +101,18 @@ func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
 
 		if res.Err() != nil {
 			if errors.Is(res.Err(), context.Canceled) {
-				if !r.outputChanClosed.Load() {
-					r.outputChan <- notifs.MakeStreamTerminatedNotif(context.Canceled.Error())
-				}
+				r.checkAndSendToOutputChan(notifs.MakeStreamTerminatedNotif(context.Canceled.Error()))
 				return
 			}
 			r.logger.Error("error while reading from LBS", "error", res.Err())
-			if !r.outputChanClosed.Load() {
-				r.outputChan <- notifs.MakeStreamTerminatedNotif(res.Err().Error())
-			}
+
+			r.checkAndSendToOutputChan(notifs.MakeStreamTerminatedNotif(res.Err().Error()))
 			return
 		}
 
 		if err := r.processLBSMessages(ctx, res.Val(), r.rs); err != nil {
 			r.logger.Error("fatal error while reading lbs", "error", err)
-			if !r.outputChanClosed.Load() {
-				r.outputChan <- notifs.MakeStreamTerminatedNotif(err.Error())
-			}
+			r.checkAndSendToOutputChan(notifs.MakeStreamTerminatedNotif(err.Error()))
 			return
 		}
 	}
@@ -174,9 +168,8 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(
 				AdditionalInfo: lbsMessage.Info,
 			}
 			r.streamLocksMutex.Unlock()
-			if !r.outputChanClosed.Load() {
-				r.outputChan <- notifs.Make(notifs.StreamAdded, lbsInfo, lbsMessage.Info)
-			}
+
+			r.checkAndSendToOutputChan(notifs.Make(notifs.StreamAdded, lbsInfo, lbsMessage.Info))
 
 			// now, keep extending the lock in a separate go routine
 			go func() {
@@ -196,11 +189,12 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 	lbsInfo notifs.LBSInfo,
 	additionalInfo map[string]any,
 ) error {
+
 	extensionFailed := false
 	defer func() {
-		if extensionFailed && !r.outputChanClosed.Load() {
+		if extensionFailed {
 			// if client is still interested or is coming back from a delay (GC pause etc) then inform about disowning of stream
-			r.outputChan <- notifs.Make(notifs.StreamDisowned, lbsInfo, additionalInfo)
+			r.checkAndSendToOutputChan(notifs.Make(notifs.StreamDisowned, lbsInfo, additionalInfo))
 		}
 	}()
 
@@ -228,16 +222,18 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 }
 
 func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
+	defer r.wg.Done()
+
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
 		select {
+		case <-r.quitChan:
+			return
 		case <-ctx.Done():
 			r.logger.Debug("context done, exiting", "consumer_id", r.consumerID)
-			if !r.outputChanClosed.Load() {
-				r.outputChan <- notifs.MakeStreamTerminatedNotif("context done")
-			}
+			r.checkAndSendToOutputChan(notifs.MakeStreamTerminatedNotif("context done"))
 			return
 		case kspNotif := <-r.kspChan:
 			if kspNotif != nil {
@@ -255,17 +251,13 @@ func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
 					additionalInfo = streamLockInfo.AdditionalInfo
 				}
 				r.streamLocksMutex.RUnlock()
-				if !r.outputChanClosed.Load() {
-					r.outputChan <- notifs.Make(notifs.StreamExpired, lbsInfo, additionalInfo)
+
+				if err := r.checkAndSendToOutputChan(notifs.Make(notifs.StreamExpired, lbsInfo, additionalInfo)); err != nil {
+					// outputChan closed
+					return
 				}
 			}
 		case <-ticker.C:
-			// check if the channel is closed,
-			// this means that the client has called Done and is no longer interested in expired notifications
-			if r.outputChanClosed.Load() {
-				r.logger.Debug("output channel closed, exiting", "consumer_id", r.consumerID)
-				return
-			}
 		}
 	}
 }

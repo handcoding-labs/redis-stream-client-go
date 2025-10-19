@@ -2,10 +2,12 @@ package impl
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
+	"github.com/handcoding-labs/redis-stream-client-go/notifs"
 )
 
 func (r *RecoverableRedisStreamClient) lbsGroupName() string {
@@ -32,9 +34,21 @@ func (r *RecoverableRedisStreamClient) isStreamProcessingDone(dataStreamName str
 }
 
 func (r *RecoverableRedisStreamClient) closeOutputChan() {
-	if r.outputChanClosed.CompareAndSwap(false, true) {
-		close(r.outputChan)
+	close(r.quitChan)   // signal quit
+	r.wg.Wait()         // wait for all routines to exit
+	close(r.outputChan) // close output channel
+}
+
+func (r *RecoverableRedisStreamClient) checkAndSendToOutputChan(notification notifs.RecoverableRedisNotification) error {
+	select {
+	case <-r.quitChan:
+		return nil
+	case r.outputChan <- notification:
+	default:
+		return fmt.Errorf("neither closed nor send")
 	}
+
+	return nil
 }
 
 // getGoogleCloudLogger returns a slog.Logger that writes to stdout.
