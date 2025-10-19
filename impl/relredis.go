@@ -58,6 +58,10 @@ type RecoverableRedisStreamClient struct {
 	lbsIdleTime time.Duration
 	// lbsRecoveryCount is the number of times a message is recovered
 	lbsRecoveryCount int
+	// kspChanSize is the size of kspChan corresponding to redis pub sub channel size
+	kspChanSize int
+	// kspChanTimeout is the duration after which a pub sub message from redis is dropped
+	kspChanTimeout time.Duration
 }
 
 // NewRedisStreamClient creates a new RedisStreamClient
@@ -100,6 +104,8 @@ func NewRedisStreamClient(
 		rs:               rs,
 		lbsIdleTime:      configs.DefaultLBSIdleTime,
 		lbsRecoveryCount: configs.DefaultLBSRecoveryCount,
+		kspChanSize:      configs.DefaultKspChanSize,
+		kspChanTimeout:   configs.DefaultKspChanTimeout,
 	}
 
 	for _, opt := range opts {

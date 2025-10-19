@@ -29,8 +29,9 @@ func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx 
 func (r *RecoverableRedisStreamClient) subscribeToExpiredEvents(ctx context.Context) error {
 	r.pubSub = r.redisClient.PSubscribe(ctx, configs.ExpiredEventPattern)
 	r.kspChan = r.pubSub.Channel(
-		redis.WithChannelHealthCheckInterval(1*time.Second),
-		redis.WithChannelSendTimeout(10*time.Minute),
+		redis.WithChannelHealthCheckInterval(5*time.Second),
+		redis.WithChannelSendTimeout(r.kspChanTimeout),
+		redis.WithChannelSize(r.kspChanSize),
 	)
 	return nil
 }
