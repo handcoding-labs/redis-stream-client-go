@@ -252,10 +252,7 @@ func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
 				}
 				r.streamLocksMutex.RUnlock()
 
-				if err := r.checkAndSendToOutputChan(notifs.Make(notifs.StreamExpired, lbsInfo, additionalInfo)); err != nil {
-					// outputChan closed
-					return
-				}
+				r.checkAndSendToOutputChan(notifs.Make(notifs.StreamExpired, lbsInfo, additionalInfo))
 			}
 		case <-ticker.C:
 		}

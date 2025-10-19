@@ -2,7 +2,6 @@ package impl
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 
@@ -39,16 +38,12 @@ func (r *RecoverableRedisStreamClient) closeOutputChan() {
 	close(r.outputChan) // close output channel
 }
 
-func (r *RecoverableRedisStreamClient) checkAndSendToOutputChan(notification notifs.RecoverableRedisNotification) error {
+func (r *RecoverableRedisStreamClient) checkAndSendToOutputChan(notification notifs.RecoverableRedisNotification) {
 	select {
 	case <-r.quitChan:
-		return nil
 	case r.outputChan <- notification:
 	default:
-		return fmt.Errorf("neither closed nor send")
 	}
-
-	return nil
 }
 
 // getGoogleCloudLogger returns a slog.Logger that writes to stdout.
