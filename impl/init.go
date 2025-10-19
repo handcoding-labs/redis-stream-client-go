@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
@@ -51,21 +50,21 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
 	})
 
 	if xpendingCmdRes.Err() != nil {
-		slog.Error("error while getting unacked messages", "error", xpendingCmdRes.Err())
+		r.logger.Error("error while getting unacked messages", "error", xpendingCmdRes.Err())
 		return
 	}
 
 	xpendingInfo := xpendingCmdRes.Val()
 	if len(xpendingInfo) == 0 {
-		slog.Info("no unacked messages found in LBS for consumer, skipping recovery")
+		r.logger.Info("no unacked messages found in LBS for consumer, skipping recovery")
 		return
 	}
 
-	slog.Info("unacked messages found in LBS for consumer", "pending_count", len(xpendingInfo))
+	r.logger.Info("unacked messages found in LBS for consumer", "pending_count", len(xpendingInfo))
 
 	xrangeCmdRes := r.redisClient.XRange(ctx, r.lbsName(), xpendingInfo[0].ID, xpendingInfo[len(xpendingInfo)-1].ID)
 	if xrangeCmdRes.Err() != nil {
-		slog.Error("error while getting unacked messages", "error", xrangeCmdRes.Err())
+		r.logger.Error("error while getting unacked messages", "error", xrangeCmdRes.Err())
 		return
 	}
 
@@ -78,7 +77,7 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
 
 	// process the message
 	if err := r.processLBSMessages(ctx, streams, r.rs); err != nil {
-		slog.Error("fatal error while processing unacked messages", "error", err)
+		r.logger.Error("fatal error while processing unacked messages", "error", err)
 		return
 	}
 }
@@ -108,7 +107,7 @@ func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
 				}
 				return
 			}
-			slog.Error("error while reading from LBS", "error", res.Err())
+			r.logger.Error("error while reading from LBS", "error", res.Err())
 			if !r.outputChanClosed.Load() {
 				r.outputChan <- notifs.MakeStreamTerminatedNotif(res.Err().Error())
 			}
@@ -116,7 +115,7 @@ func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
 		}
 
 		if err := r.processLBSMessages(ctx, res.Val(), r.rs); err != nil {
-			slog.Error("fatal error while reading lbs", "error", err)
+			r.logger.Error("fatal error while reading lbs", "error", err)
 			if !r.outputChanClosed.Load() {
 				r.outputChan <- notifs.MakeStreamTerminatedNotif(err.Error())
 			}
@@ -182,7 +181,7 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(
 			// now, keep extending the lock in a separate go routine
 			go func() {
 				if err := r.startExtendingKey(ctx, mutex, lbsInfo, lbsMessage.Info); err != nil {
-					slog.Error("Error extending key", "error", err, "stream", lbsInfo.DataStreamName)
+					r.logger.Error("Error extending key", "error", err, "stream", lbsInfo.DataStreamName)
 				}
 			}()
 		}
@@ -209,13 +208,13 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 		// exit extending the key if:
 		// main context is canceled
 		if r.isContextDone(ctx) {
-			slog.Debug("context done, exiting", "consumer_id", r.consumerID)
+			r.logger.Debug("context done, exiting", "consumer_id", r.consumerID)
 			return nil
 		}
 
 		// or if DoneStream was called
 		if r.isStreamProcessingDone(lbsInfo.DataStreamName) {
-			slog.Debug("DoneStream called. Stopping key extension.")
+			r.logger.Debug("DoneStream called. Stopping key extension.")
 			return nil
 		}
 
@@ -235,17 +234,17 @@ func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Debug("context done, exiting", "consumer_id", r.consumerID)
+			r.logger.Debug("context done, exiting", "consumer_id", r.consumerID)
 			if !r.outputChanClosed.Load() {
 				r.outputChan <- notifs.MakeStreamTerminatedNotif("context done")
 			}
 			return
 		case kspNotif := <-r.kspChan:
 			if kspNotif != nil {
-				slog.Debug("ksp notif received", "consumer_id", r.consumerID, "payload", kspNotif.Payload)
+				r.logger.Debug("ksp notif received", "consumer_id", r.consumerID, "payload", kspNotif.Payload)
 				lbsInfo, err := notifs.CreateByKspNotification(kspNotif.Payload)
 				if err != nil {
-					slog.Warn("error parsing ksp notification", "ksp_notification", kspNotif)
+					r.logger.Warn("error parsing ksp notification", "ksp_notification", kspNotif)
 					continue
 				}
 
@@ -264,7 +263,7 @@ func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
 			// check if the channel is closed,
 			// this means that the client has called Done and is no longer interested in expired notifications
 			if r.outputChanClosed.Load() {
-				slog.Debug("output channel closed, exiting", "consumer_id", r.consumerID)
+				r.logger.Debug("output channel closed, exiting", "consumer_id", r.consumerID)
 				return
 			}
 		}
