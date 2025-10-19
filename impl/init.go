@@ -189,7 +189,6 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 	lbsInfo notifs.LBSInfo,
 	additionalInfo map[string]any,
 ) error {
-
 	extensionFailed := false
 	defer func() {
 		if extensionFailed {
