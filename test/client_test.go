@@ -174,6 +174,62 @@ func TestLBSRecovery(t *testing.T) {
 	require.False(t, ok)
 }
 
+// See #issue 55 for more details
+func TestLBSRecoveryOfDiscontinuousStreamMessages(t *testing.T) {
+	ctxWCancel, cancelFunc := context.WithCancel(context.Background())
+	ctx := context.TODO()
+	redisContainer := setupSuite(t)
+
+	redisClient := newRedisClient(redisContainer)
+	res := redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
+	require.NoError(t, res.Err())
+
+	consumer := createConsumer("111", redisContainer)
+	opChan, err := consumer.Init(ctxWCancel)
+	require.NoError(t, err)
+	require.NotNil(t, opChan)
+
+	addNStreamsToLBS(t, redisContainer, 5)
+
+	time.Sleep(1 * time.Second)
+
+	// ack few streams
+	consumer.DoneStream(ctx, "session1")
+	consumer.DoneStream(ctx, "session3")
+
+	// kill consumer don't ack other messages
+	cancelFunc()
+
+	// restart consumer
+	consumer = createConsumer("111", redisContainer)
+	opChan, err = consumer.Init(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, opChan)
+
+	expectedToBeRecovered := map[string]bool{
+		"session0": true,
+		"session2": true,
+		"session4": true,
+	}
+
+	for len(expectedToBeRecovered) > 0 {
+		select {
+		case msg, ok := <-opChan:
+			if ok {
+				t.Log("received message after recovery: ", msg)
+				require.Contains(t, expectedToBeRecovered, msg.Payload.DataStreamName)
+				delete(expectedToBeRecovered, msg.Payload.DataStreamName)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("did not receive message after recovery")
+		}
+	}
+	err = consumer.Done()
+	require.NoError(t, err)
+	_, ok := <-opChan
+	require.False(t, ok)
+}
+
 func TestClaimWorksOnlyOnce(t *testing.T) {
 	ctxWCancel, cancelFunc := context.WithCancel(context.Background())
 	ctxWOCancel := context.Background()

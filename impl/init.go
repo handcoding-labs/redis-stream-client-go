@@ -61,16 +61,29 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
 
 	r.logger.Info("unacked messages found in LBS for consumer", "pending_count", len(xpendingInfo))
 
-	xrangeCmdRes := r.redisClient.XRange(ctx, r.lbsName(), xpendingInfo[0].ID, xpendingInfo[len(xpendingInfo)-1].ID)
-	if xrangeCmdRes.Err() != nil {
-		r.logger.Error("error while getting unacked messages", "error", xrangeCmdRes.Err())
+	// XREADGROUP ensures that no two consumers get the same message
+	xreadCmdRes := r.redisClient.XReadGroup(ctx, &redis.XReadGroupArgs{
+		Group:    r.lbsGroupName(),
+		Consumer: r.consumerID,
+		Streams:  []string{r.lbsName(), configs.PendingMsgID},
+		Block:    0,
+	})
+
+	if xreadCmdRes.Err() != nil {
+		r.logger.Error("error reading recoverable messages in lbs, skipping recovery")
 		return
+	}
+
+	result := xreadCmdRes.Val()
+	// we expect only one stream which is lbs here
+	if len(result) != 1 {
+		r.logger.Warn("found more than one entry while reading lbs!, picking the first")
 	}
 
 	streams := []redis.XStream{
 		{
 			Stream:   r.lbsName(),
-			Messages: xrangeCmdRes.Val(),
+			Messages: result[0].Messages,
 		},
 	}
 
