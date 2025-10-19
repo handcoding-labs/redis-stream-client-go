@@ -194,8 +194,8 @@ func TestLBSRecoveryOfDiscontinuousStreamMessages(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	// ack few streams
-	consumer.DoneStream(ctx, "session1")
-	consumer.DoneStream(ctx, "session3")
+	require.NoError(t, consumer.DoneStream(ctx, "session1"))
+	require.NoError(t, consumer.DoneStream(ctx, "session3"))
 
 	// kill consumer don't ack other messages
 	cancelFunc()
