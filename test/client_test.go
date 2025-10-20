@@ -203,8 +203,8 @@ func TestLBSRecoveryOfDiscontinuousStreamMessages(t *testing.T) {
 	// let idle time pass
 	time.Sleep(6 * time.Second)
 
-	// restart consumer
-	consumer = createConsumer("111", redisContainer, impl.WithLBSIdleTime(4*time.Second))
+	// different consumer comes up
+	consumer = createConsumer("222", redisContainer, impl.WithLBSIdleTime(4*time.Second))
 	opChan, err = consumer.Init(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, opChan)
