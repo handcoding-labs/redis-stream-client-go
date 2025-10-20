@@ -39,7 +39,6 @@ func (r *RecoverableRedisStreamClient) subscribeToExpiredEvents(ctx context.Cont
 // So, this method is just recovering those messages and if there is an issue in
 // processing them, then erroring out will stop consumer from processing latest streams also.
 func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
-
 	// nextStart is initialized to empty string to claiming can start
 	// when it gets populated as 0-0 as a result to auto claim,
 	// it means there is nothing more to claim or process
