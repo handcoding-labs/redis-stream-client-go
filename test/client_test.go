@@ -200,8 +200,11 @@ func TestLBSRecoveryOfDiscontinuousStreamMessages(t *testing.T) {
 	// kill consumer don't ack other messages
 	cancelFunc()
 
+	// let idle time pass
+	time.Sleep(6 * time.Second)
+
 	// restart consumer
-	consumer = createConsumer("111", redisContainer)
+	consumer = createConsumer("111", redisContainer, impl.WithLBSIdleTime(4*time.Second))
 	opChan, err = consumer.Init(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, opChan)
@@ -225,6 +228,7 @@ func TestLBSRecoveryOfDiscontinuousStreamMessages(t *testing.T) {
 		}
 	}
 	err = consumer.Done()
+
 	require.NoError(t, err)
 	_, ok := <-opChan
 	require.False(t, ok)
@@ -685,10 +689,10 @@ func addNStreamsToLBS(t *testing.T, redisContainer *redis.RedisContainer, n int)
 	}
 }
 
-func createConsumer(name string, redisContainer *redis.RedisContainer) types.RedisStreamClient {
+func createConsumer(name string, redisContainer *redis.RedisContainer, opts ...impl.RecoverableRedisOption) types.RedisStreamClient {
 	_ = os.Setenv("POD_NAME", name)
 	// create a new redis client
-	return impl.NewRedisStreamClient(newRedisClient(redisContainer), "consumer")
+	return impl.NewRedisStreamClient(newRedisClient(redisContainer), "consumer", opts...)
 }
 
 func listenToKsp(t *testing.T, outputChan <-chan notifs.RecoverableRedisNotification, consumers map[int]types.RedisStreamClient, i int) {

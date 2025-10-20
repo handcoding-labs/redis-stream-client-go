@@ -39,51 +39,37 @@ func (r *RecoverableRedisStreamClient) subscribeToExpiredEvents(ctx context.Cont
 // So, this method is just recovering those messages and if there is an issue in
 // processing them, then erroring out will stop consumer from processing latest streams also.
 func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
-	xpendingCmdRes := r.redisClient.XPendingExt(ctx, &redis.XPendingExtArgs{
-		Stream: r.lbsName(),
-		Group:  r.lbsGroupName(),
-		Idle:   r.lbsIdleTime,
-		Start:  configs.MinimalRangeID,
-		End:    configs.MaximalRangeID,
-		Count:  int64(r.lbsRecoveryCount),
-	})
 
-	if xpendingCmdRes.Err() != nil {
-		r.logger.Error("error while getting unacked messages", "error", xpendingCmdRes.Err())
-		return
+	// nextStart is initialized to empty string to claiming can start
+	// when it gets populated as 0-0 as a result to auto claim,
+	// it means there is nothing more to claim or process
+	nextStart := ""
+	var unackedMessages []redis.XMessage
+	for nextStart != configs.StartIDPair {
+		xautoClaimRes := r.redisClient.XAutoClaim(ctx, &redis.XAutoClaimArgs{
+			Stream:   r.lbsName(),
+			Group:    r.lbsGroupName(),
+			MinIdle:  r.lbsIdleTime,
+			Start:    configs.StartIDPair,
+			Count:    int64(r.lbsRecoveryCount),
+			Consumer: r.consumerID,
+		})
+
+		if xautoClaimRes.Err() != nil {
+			r.logger.Error("error while getting unacked messages", "error", xautoClaimRes.Err())
+		}
+
+		msgs, start := xautoClaimRes.Val()
+		unackedMessages = append(unackedMessages, msgs...)
+		nextStart = start
 	}
 
-	xpendingInfo := xpendingCmdRes.Val()
-	if len(xpendingInfo) == 0 {
-		r.logger.Info("no unacked messages found in LBS for consumer, skipping recovery")
-		return
-	}
-
-	r.logger.Info("unacked messages found in LBS for consumer", "pending_count", len(xpendingInfo))
-
-	// XREADGROUP ensures that no two consumers get the same message
-	xreadCmdRes := r.redisClient.XReadGroup(ctx, &redis.XReadGroupArgs{
-		Group:    r.lbsGroupName(),
-		Consumer: r.consumerID,
-		Streams:  []string{r.lbsName(), configs.PendingMsgID},
-		Block:    0,
-	})
-
-	if xreadCmdRes.Err() != nil {
-		r.logger.Error("error reading recoverable messages in lbs, skipping recovery")
-		return
-	}
-
-	result := xreadCmdRes.Val()
-	// we expect only one stream which is lbs here
-	if len(result) != 1 {
-		r.logger.Warn("found more than one entry while reading lbs!, picking the first")
-	}
+	r.logger.Info("unacked messages found in LBS for consumer", "pending_count", len(unackedMessages))
 
 	streams := []redis.XStream{
 		{
 			Stream:   r.lbsName(),
-			Messages: result[0].Messages,
+			Messages: unackedMessages,
 		},
 	}
 
