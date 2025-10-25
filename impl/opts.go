@@ -11,7 +11,7 @@ type RecoverableRedisOption func(*RecoverableRedisStreamClient) error
 func WithLBSIdleTime(idleTime time.Duration) RecoverableRedisOption {
 	return func(r *RecoverableRedisStreamClient) error {
 		// idleTime must be greater than 2 * heartbeat interval at least
-		if idleTime == 0 || idleTime <= (2*r.hbInterval) {
+		if idleTime == 0 || idleTime < (2*r.hbInterval) {
 			return fmt.Errorf("idleTime must be greater than 2 * heartbeat interval at least")
 		}
 
