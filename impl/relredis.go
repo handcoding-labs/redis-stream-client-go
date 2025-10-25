@@ -9,7 +9,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/go-redsync/redsync/v4"
@@ -50,14 +49,20 @@ type RecoverableRedisStreamClient struct {
 	pubSub *redis.PubSub
 	// outputChan is the channel exposed to clients on which we relay all messages
 	outputChan chan notifs.RecoverableRedisNotification
-	// outputChanClosed tracks if the outputChan is still being read by client
-	outputChanClosed atomic.Bool
+	// quitChan tracks if the outputChan is closed
+	quitChan chan struct{}
+	// wg ensures that cleanup can wait till all senders to outputChan are done
+	wg sync.WaitGroup
 	// rs is a shared redsync instance used for distributed locks
 	rs *redsync.Redsync
 	// lbsIdleTime is the time after which a message is considered idle
 	lbsIdleTime time.Duration
 	// lbsRecoveryCount is the number of times a message is recovered
 	lbsRecoveryCount int
+	// kspChanSize is the size of kspChan corresponding to redis pub sub channel size
+	kspChanSize int
+	// kspChanTimeout is the duration after which a pub sub message from redis is dropped
+	kspChanTimeout time.Duration
 	// logger for plain json logging
 	logger *slog.Logger
 }
@@ -98,10 +103,13 @@ func NewRedisStreamClient(
 		streamLocks:      make(map[string]*StreamLocksInfo),
 		serviceName:      serviceName,
 		outputChan:       make(chan notifs.RecoverableRedisNotification, 500),
-		outputChanClosed: atomic.Bool{},
+		quitChan:         make(chan struct{}),
+		wg:               sync.WaitGroup{},
 		rs:               rs,
 		lbsIdleTime:      configs.DefaultLBSIdleTime,
 		lbsRecoveryCount: configs.DefaultLBSRecoveryCount,
+		kspChanSize:      configs.DefaultKspChanSize,
+		kspChanTimeout:   configs.DefaultKspChanTimeout,
 		logger:           getGoogleCloudLogger(),
 	}
 
@@ -154,6 +162,7 @@ func (r *RecoverableRedisStreamClient) Init(
 	go r.readLBSStream(newCtx)
 
 	// listen to ksp chan
+	r.wg.Add(1)
 	go r.listenKsp(newCtx)
 
 	return r.outputChan, nil

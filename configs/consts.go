@@ -22,4 +22,6 @@ const (
 	DefaultLBSIdleTime              = 20 * DefaultHBInterval
 	DefaultLBSRecoveryCount         = 1000
 	DefaultHBInterval               = 2 * time.Second
+	DefaultKspChanSize              = 100
+	DefaultKspChanTimeout           = 10 * time.Minute
 )

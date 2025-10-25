@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
+	"github.com/handcoding-labs/redis-stream-client-go/notifs"
 )
 
 func (r *RecoverableRedisStreamClient) lbsGroupName() string {
@@ -32,8 +33,16 @@ func (r *RecoverableRedisStreamClient) isStreamProcessingDone(dataStreamName str
 }
 
 func (r *RecoverableRedisStreamClient) closeOutputChan() {
-	if r.outputChanClosed.CompareAndSwap(false, true) {
-		close(r.outputChan)
+	close(r.quitChan)   // signal quit
+	r.wg.Wait()         // wait for all routines to exit
+	close(r.outputChan) // close output channel
+}
+
+func (r *RecoverableRedisStreamClient) checkAndSendToOutputChan(notification notifs.RecoverableRedisNotification) {
+	select {
+	case <-r.quitChan:
+	case r.outputChan <- notification:
+	default:
 	}
 }
 
