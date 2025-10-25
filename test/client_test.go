@@ -154,20 +154,34 @@ func TestLBSRecovery(t *testing.T) {
 	// kill consumer don't ack the message
 	cancelFunc()
 
+	// wait until all ksp notifications exhausted
+	time.Sleep(5 * time.Second)
+
 	// restart consumer
-	consumer = createConsumer("111", redisContainer)
+	consumer = createConsumer("111", redisContainer, impl.WithLBSIdleTime(4*time.Second))
 	opChan, err = consumer.Init(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, opChan)
+	recovered := false
+	timedout := false
 
-	select {
-	case msg, ok := <-opChan:
-		if ok {
-			t.Log("received message after recovery: ", msg)
+	for !recovered && !timedout {
+		select {
+		case msg, ok := <-opChan:
+			require.True(t, ok)
+			if ok {
+				require.Equal(t, msg.Type, notifs.StreamAdded)
+				require.Equal(t, msg.Payload.DataStreamName, "session0")
+				recovered = true
+			}
+		case <-time.After(10 * time.Second):
+			timedout = true
 		}
-	case <-time.After(10 * time.Second):
-		t.Fatalf("did not receive message after recovery")
 	}
+
+	require.False(t, timedout)
+	require.True(t, recovered)
+
 	err = consumer.Done()
 	require.NoError(t, err)
 	_, ok := <-opChan
@@ -219,16 +233,17 @@ func TestLBSRecoveryOfDiscontinuousStreamMessages(t *testing.T) {
 		select {
 		case msg, ok := <-opChan:
 			if ok {
-				t.Log("received message after recovery: ", msg)
+				require.Equal(t, msg.Type, notifs.StreamAdded)
 				require.Contains(t, expectedToBeRecovered, msg.Payload.DataStreamName)
 				delete(expectedToBeRecovered, msg.Payload.DataStreamName)
 			}
 		case <-time.After(10 * time.Second):
-			t.Fatalf("did not receive message after recovery")
 		}
 	}
-	err = consumer.Done()
 
+	require.Empty(t, expectedToBeRecovered)
+
+	err = consumer.Done()
 	require.NoError(t, err)
 	_, ok := <-opChan
 	require.False(t, ok)

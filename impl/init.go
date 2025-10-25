@@ -63,7 +63,11 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
 		nextStart = start
 	}
 
-	r.logger.Info("unacked messages found in LBS for consumer", "pending_count", len(unackedMessages))
+	if len(unackedMessages) > 0 {
+		r.logger.Info("unacked messages found in LBS for consumer", "pending_count", len(unackedMessages))
+	} else {
+		r.logger.Info("no unacked messages found in LBS for consumer")
+	}
 
 	streams := []redis.XStream{
 		{
