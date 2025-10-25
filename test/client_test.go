@@ -154,20 +154,95 @@ func TestLBSRecovery(t *testing.T) {
 	// kill consumer don't ack the message
 	cancelFunc()
 
+	// wait until all ksp notifications exhausted
+	time.Sleep(5 * time.Second)
+
 	// restart consumer
-	consumer = createConsumer("111", redisContainer)
+	consumer = createConsumer("111", redisContainer, impl.WithLBSIdleTime(4*time.Second))
+	opChan, err = consumer.Init(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, opChan)
+	recovered := false
+	timedout := false
+
+	for !recovered && !timedout {
+		select {
+		case msg, ok := <-opChan:
+			require.True(t, ok)
+			if ok {
+				require.Equal(t, msg.Type, notifs.StreamAdded)
+				require.Equal(t, msg.Payload.DataStreamName, "session0")
+				recovered = true
+			}
+		case <-time.After(10 * time.Second):
+			timedout = true
+		}
+	}
+
+	require.False(t, timedout)
+	require.True(t, recovered)
+
+	err = consumer.Done()
+	require.NoError(t, err)
+	_, ok := <-opChan
+	require.False(t, ok)
+}
+
+// See #issue 55 for more details
+func TestLBSRecoveryOfDiscontinuousStreamMessages(t *testing.T) {
+	ctxWCancel, cancelFunc := context.WithCancel(context.Background())
+	ctx := context.TODO()
+	redisContainer := setupSuite(t)
+
+	redisClient := newRedisClient(redisContainer)
+	res := redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
+	require.NoError(t, res.Err())
+
+	consumer := createConsumer("111", redisContainer)
+	opChan, err := consumer.Init(ctxWCancel)
+	require.NoError(t, err)
+	require.NotNil(t, opChan)
+
+	addNStreamsToLBS(t, redisContainer, 5)
+
+	time.Sleep(1 * time.Second)
+
+	// ack few streams
+	require.NoError(t, consumer.DoneStream(ctx, "session1"))
+	require.NoError(t, consumer.DoneStream(ctx, "session3"))
+
+	// kill consumer don't ack other messages
+	cancelFunc()
+
+	// let idle time pass
+	time.Sleep(6 * time.Second)
+
+	// different consumer comes up
+	consumer = createConsumer("222", redisContainer, impl.WithLBSIdleTime(4*time.Second))
 	opChan, err = consumer.Init(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, opChan)
 
-	select {
-	case msg, ok := <-opChan:
-		if ok {
-			t.Log("received message after recovery: ", msg)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatalf("did not receive message after recovery")
+	expectedToBeRecovered := map[string]bool{
+		"session0": true,
+		"session2": true,
+		"session4": true,
 	}
+
+	for len(expectedToBeRecovered) > 0 {
+		select {
+		case msg, ok := <-opChan:
+			if ok {
+				require.Equal(t, msg.Type, notifs.StreamAdded)
+				require.Contains(t, expectedToBeRecovered, msg.Payload.DataStreamName)
+				delete(expectedToBeRecovered, msg.Payload.DataStreamName)
+			}
+		case <-time.After(10 * time.Second):
+		}
+	}
+
+	require.Empty(t, expectedToBeRecovered)
+
 	err = consumer.Done()
 	require.NoError(t, err)
 	_, ok := <-opChan
@@ -629,10 +704,10 @@ func addNStreamsToLBS(t *testing.T, redisContainer *redis.RedisContainer, n int)
 	}
 }
 
-func createConsumer(name string, redisContainer *redis.RedisContainer) types.RedisStreamClient {
+func createConsumer(name string, redisContainer *redis.RedisContainer, opts ...impl.RecoverableRedisOption) types.RedisStreamClient {
 	_ = os.Setenv("POD_NAME", name)
 	// create a new redis client
-	return impl.NewRedisStreamClient(newRedisClient(redisContainer), "consumer")
+	return impl.NewRedisStreamClient(newRedisClient(redisContainer), "consumer", opts...)
 }
 
 func listenToKsp(t *testing.T, outputChan <-chan notifs.RecoverableRedisNotification, consumers map[int]types.RedisStreamClient, i int) {
