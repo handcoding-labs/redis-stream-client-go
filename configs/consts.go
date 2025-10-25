@@ -10,6 +10,7 @@ const (
 	MinimalRangeID                  = "-"
 	MaximalRangeID                  = "+"
 	StartID                         = "0"
+	StartIDPair                     = "0-0"
 	ExpiredEventPattern             = "__keyevent@0__:expired"
 	NotifyKeyspaceEventsCmd         = "notify-keyspace-events"
 	KeyspacePatternForExpiredEvents = "Ex"
