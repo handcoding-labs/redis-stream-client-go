@@ -225,9 +225,6 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
 	defer r.wg.Done()
 
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-
 	for {
 		select {
 		case <-r.quitChan:
@@ -255,7 +252,6 @@ func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
 
 				r.checkAndSendToOutputChan(notifs.Make(notifs.StreamExpired, lbsInfo, additionalInfo))
 			}
-		case <-ticker.C:
 		}
 	}
 }

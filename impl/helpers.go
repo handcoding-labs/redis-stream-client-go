@@ -41,8 +41,11 @@ func (r *RecoverableRedisStreamClient) closeOutputChan() {
 func (r *RecoverableRedisStreamClient) checkAndSendToOutputChan(notification notifs.RecoverableRedisNotification) {
 	select {
 	case <-r.quitChan:
+		r.logger.Info("exiting threads; signal on quitChan")
 	case r.outputChan <- notification:
+		r.logger.Info("notification sent", "type", notification.Type, "payload", notification.Payload)
 	default:
+		r.logger.Warn("outputChan full, dropping message")
 	}
 }
 
