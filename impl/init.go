@@ -135,7 +135,12 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(
 
 			// unmarshal the message
 			var lbsMessage notifs.LBSInputMessage
-			if err := json.Unmarshal([]byte(v.(string)), &lbsMessage); err != nil {
+			val, ok := v.(string)
+			if !ok {
+				return fmt.Errorf("error while converting lbs message")
+			}
+
+			if err := json.Unmarshal([]byte(val), &lbsMessage); err != nil {
 				return fmt.Errorf("error while unmarshalling LBS message: %w", err)
 			}
 
