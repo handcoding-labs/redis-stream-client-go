@@ -13,8 +13,8 @@ on:
     - cron: '0 2 * * *'
 
 env:
-  GO_VERSION_MATRIX: '["1.22", "1.23"]'
-  GOLANGCI_LINT_VERSION: 'v1.61.0'
+  GO_VERSION: '1.24.9'  # Single version for consistency
+  GOLANGCI_LINT_VERSION: 'latest'
 
 jobs:
   # Code quality and linting
@@ -28,7 +28,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Cache Go modules
         uses: actions/cache@v4
@@ -72,7 +72,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Run Go Security Check
         run: |
@@ -91,7 +91,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
@@ -99,31 +99,26 @@ jobs:
       - name: Run Go vulnerability check
         run: govulncheck ./...
 
-  # Build and test matrix
+  # Build and test
   test:
-    name: Test (Go ${{ matrix.go-version }})
+    name: Test
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        go-version: [1.22, 1.23]
-    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Go ${{ matrix.go-version }}
+      - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ matrix.go-version }}
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Cache Go modules
         uses: actions/cache@v4
         with:
           path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
-            ${{ runner.os }}-go-${{ matrix.go-version }}-
+            ${{ runner.os }}-go-
 
       - name: Download dependencies
         run: go mod download
@@ -141,7 +136,6 @@ jobs:
         run: go tool cover -html=coverage.out -o coverage.html
 
       - name: Upload coverage to Codecov
-        if: matrix.go-version == '1.23'
         uses: codecov/codecov-action@v4
         with:
           file: ./coverage.out
@@ -149,7 +143,6 @@ jobs:
           name: codecov-umbrella
 
       - name: Upload coverage artifacts
-        if: matrix.go-version == '1.23'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
@@ -168,7 +161,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Cache Go modules
         uses: actions/cache@v4
@@ -205,7 +198,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Cache Go modules
         uses: actions/cache@v4
