@@ -14,7 +14,7 @@ on:
 
 env:
   GO_VERSION_MATRIX: '["1.24", "1.25"]'
-  GOLANGCI_LINT_VERSION: 'v1.61.0'
+  GOLANGCI_LINT_VERSION: 'v1.62.0'
 
 jobs:
   # Code quality and linting
