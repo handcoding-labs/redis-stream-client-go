@@ -31,3 +31,29 @@ func WithLBSRecoveryCount(count int) RecoverableRedisOption {
 		return nil
 	}
 }
+
+// WithKspChanSize sets the size of the ksp channel which corresponds to number of
+// pub sub notifications that we can receive from redis
+func WithKspChanSize(size int) RecoverableRedisOption {
+	return func(r *RecoverableRedisStreamClient) error {
+		if size <= 0 {
+			return fmt.Errorf("kspChanSize must be a positive number")
+		}
+
+		r.kspChanSize = size
+		return nil
+	}
+}
+
+// WithKspChanTimeout is the duration after which an outstanding pub sub message
+// from redis pub sub is dropped from channel
+func WithKspChanTimeout(timeout time.Duration) RecoverableRedisOption {
+	return func(r *RecoverableRedisStreamClient) error {
+		if timeout == 0 {
+			return fmt.Errorf("timeout cannot be zero value")
+		}
+
+		r.kspChanTimeout = timeout
+		return nil
+	}
+}
