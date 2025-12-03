@@ -13,7 +13,7 @@ on:
     - cron: '0 2 * * *'
 
 env:
-  GO_VERSION: '1.24.9'  # Single version for consistency
+  GO_VERSION: '1.24.11'  # Single version for consistency
   GOLANGCI_LINT_VERSION: 'latest'
 
 jobs:
