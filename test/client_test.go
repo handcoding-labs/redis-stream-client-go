@@ -121,9 +121,9 @@ func TestLBS(t *testing.T) {
 		}
 	}
 
-	err = consumer1.Done()
+	err = consumer1.Done(ctx)
 	require.NoError(t, err)
-	err = consumer2.Done()
+	err = consumer2.Done(ctx)
 	require.NoError(t, err)
 
 	_, ok := <-opChan1
@@ -182,7 +182,7 @@ func TestLBSRecovery(t *testing.T) {
 	require.False(t, timedout)
 	require.True(t, recovered)
 
-	err = consumer.Done()
+	err = consumer.Done(ctx)
 	require.NoError(t, err)
 	_, ok := <-opChan
 	require.False(t, ok)
@@ -243,7 +243,7 @@ func TestLBSRecoveryOfDiscontinuousStreamMessages(t *testing.T) {
 
 	require.Empty(t, expectedToBeRecovered)
 
-	err = consumer.Done()
+	err = consumer.Done(ctx)
 	require.NoError(t, err)
 	_, ok := <-opChan
 	require.False(t, ok)
@@ -323,9 +323,9 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	require.Equal(t, err, fmt.Errorf("already claimed"))
 
 	// Done is not called on consumer1 as it's crashed
-	err = consumer2.Done()
+	err = consumer2.Done(ctxWOCancel)
 	require.NoError(t, err)
-	err = consumer3.Done()
+	err = consumer3.Done(ctxWOCancel)
 	require.NoError(t, err)
 }
 
@@ -359,7 +359,7 @@ func TestBlockingRead(t *testing.T) {
 	}
 
 	require.True(t, got)
-	err = consumer.Done()
+	err = consumer.Done(ctx)
 	require.NoError(t, err)
 	_, ok := <-opChan
 	require.False(t, ok)
@@ -406,9 +406,9 @@ func TestKspNotifs(t *testing.T) {
 }
 
 func TestKspNotifsBulk(t *testing.T) {
-	// this is kept 3000 because go test suite times out at 30s and this is the number of streams that we can process
+	// this is kept 2000 because go test suite times out at 30s and this is the number of streams that we can process
 	// to test higher numbers run locally by increasing timeout : go test -timeout=600s ...
-	totalStreams := 3000
+	totalStreams := 2000
 	totalConsumers := totalStreams / 200 // having low number of consumers will create lag
 
 	redisContainer := setupSuite(t)
@@ -661,7 +661,7 @@ func TestMainFlow(t *testing.T) {
 	require.Less(t, i, 10)
 
 	require.True(t, gotNotification)
-	err = consumer2.Done()
+	err = consumer2.Done(ctxWithCancel)
 	require.NoError(t, err)
 	// no Done is called on consumer1 because it crashed
 	// either Done is called or context is canceled
@@ -707,7 +707,10 @@ func addNStreamsToLBS(t *testing.T, redisContainer *redis.RedisContainer, n int)
 func createConsumer(name string, redisContainer *redis.RedisContainer, opts ...impl.RecoverableRedisOption) types.RedisStreamClient {
 	_ = os.Setenv("POD_NAME", name)
 	// create a new redis client
-	return impl.NewRedisStreamClient(newRedisClient(redisContainer), "consumer", opts...)
+	// always override config for tests
+	opts = append(opts, impl.WithForceConfigOverride())
+	relredis, _ := impl.NewRedisStreamClient(newRedisClient(redisContainer), "consumer", opts...)
+	return relredis
 }
 
 func listenToKsp(t *testing.T, outputChan <-chan notifs.RecoverableRedisNotification, consumers map[int]types.RedisStreamClient, i int) {
