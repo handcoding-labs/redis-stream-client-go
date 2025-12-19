@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
@@ -17,6 +18,25 @@ import (
 func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx context.Context) error {
 	// subscribe to key space events for expiration only
 	// https://redis.io/docs/latest/develop/use/keyspace-notifications/
+	existingConfig := r.redisClient.ConfigGet(ctx, configs.NotifyKeyspaceEventsCmd)
+	configVals, err := existingConfig.Result()
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(configVals)
+
+	for _, v := range configVals {
+		if len(v) > 0 {
+			// some config for key space notifications already exists, so exit
+			if !r.forceOverrideConfig {
+				return fmt.Errorf("detected existing configuration for key space notifications and force override is disabled")
+			} else {
+				slog.Warn("overriding existing keyspace notifications config since force override is set")
+			}
+		}
+	}
+
 	res := r.redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
 	if res.Err() != nil {
 		return res.Err()
@@ -85,7 +105,6 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
 }
 
 func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
-	defer r.wg.Done()
 	for {
 		// check if context is done
 		if r.isContextDone(ctx) {

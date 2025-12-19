@@ -73,7 +73,10 @@ func runConsumer() {
 	}
 
 	// Create Redis Stream Client
-	client := impl.NewRedisStreamClient(redisClient, "load-balance-demo")
+	client, err := impl.NewRedisStreamClient(redisClient, "load-balance-demo")
+	if err != nil {
+		slog.Error("could not initialize", "error", err.Error())
+	}
 	slog.Info("Created client", "client_id", client.ID())
 
 	// Initialize the client
@@ -118,7 +121,7 @@ func runConsumer() {
 	slog.Info("🛑 Shutdown signal received, cleaning up...", "consumer_id", consumerID)
 
 	// Graceful shutdown
-	if err := client.Done(); err != nil {
+	if err := client.Done(ctx); err != nil {
 		slog.Error("❌ Error during cleanup", "consumer_id", consumerID, "error", err)
 	} else {
 		slog.Info("✅ Client cleanup completed", "consumer_id", consumerID)
