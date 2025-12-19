@@ -105,7 +105,6 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
 }
 
 func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
-	defer r.wg.Done()
 	for {
 		// check if context is done
 		if r.isContextDone(ctx) {
