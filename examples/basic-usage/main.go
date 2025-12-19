@@ -52,7 +52,10 @@ func main() {
 	}
 
 	// Create Redis Stream Client
-	client := impl.NewRedisStreamClient(redisClient, "basic-example")
+	client, err := impl.NewRedisStreamClient(redisClient, "basic-example")
+	if err != nil {
+		slog.Error("could not initialize", "error", err.Error())
+	}
 	slog.Info("Created client", "client_id", client.ID())
 
 	// Initialize the client
@@ -98,7 +101,7 @@ func main() {
 	slog.Info("Shutdown signal received, cleaning up...")
 
 	// Graceful shutdown
-	if err := client.Done(); err != nil {
+	if err := client.Done(ctx); err != nil {
 		slog.Error("Error during cleanup", "error", err)
 	} else {
 		slog.Info("Client cleanup completed successfully")
@@ -153,7 +156,7 @@ func addTestData(ctx context.Context, redisClient redis.UniversalClient) {
 }
 
 // handleStreamAdded processes a newly assigned stream
-func handleStreamAdded(ctx context.Context, lbsInfo notifs.RecoverableRedisNotification) {
+func handleStreamAdded(_ context.Context, lbsInfo notifs.RecoverableRedisNotification) {
 	slog.Info("Processing stream", "stream_name", lbsInfo.Payload.DataStreamName, "stream_info", lbsInfo.AdditionalInfo)
 
 	// Simulate processing the data stream

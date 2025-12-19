@@ -56,7 +56,7 @@ The client supports optional configuration parameters:
 import "github.com/handcoding-labs/redis-stream-client-go/impl"
 
 // Create client with custom configuration
-client := impl.NewRedisStreamClient(
+client, err := impl.NewRedisStreamClient(
     redisClient, 
     "my-service",
     impl.WithLBSIdleTime(30*time.Second),        // Time before message considered idle (default: 40s)
@@ -226,7 +226,10 @@ func main() {
     redisClient.ConfigSet(ctx, "notify-keyspace-events", "Ex")
 
     // Create and initialize stream client
-    client := impl.NewRedisStreamClient(redisClient, "example-service")
+    client, err := impl.NewRedisStreamClient(redisClient, "example-service")
+    if err != nil {
+        slog.Error("could not initialize", "error", err.Error())
+    }
     outputChan, err := client.Init(ctx)
     if err != nil {
         slog.Error("Failed to initialize client", "error", err)
