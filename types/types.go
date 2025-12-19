@@ -26,7 +26,7 @@ type RedisStreamClient interface {
 	// Done marks the end of processing the stream
 	//
 	// should be called when consumer is shutting down and is not expected to be called again.
-	Done() error
+	Done(ctx context.Context) error
 	// DoneStream marks end of processing for a particular stream
 	//
 	// should be called when consumer is done processing a particular data stream.

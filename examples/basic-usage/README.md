@@ -70,7 +70,10 @@ redisClient := redis.NewUniversalClient(&redis.UniversalOptions{
 redisClient.ConfigSet(ctx, "notify-keyspace-events", "Ex")
 
 // Create Redis Stream Client
-client := impl.NewRedisStreamClient(redisClient, "basic-example")
+client, err := impl.NewRedisStreamClient(redisClient, "basic-example")
+if err != nil {
+    // handle error
+}
 ```
 
 ### 2. Initialization

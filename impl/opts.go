@@ -57,3 +57,10 @@ func WithKspChanTimeout(timeout time.Duration) RecoverableRedisOption {
 		return nil
 	}
 }
+
+func WithForceConfigOverride() RecoverableRedisOption {
+	return func(r *RecoverableRedisStreamClient) error {
+		r.forceOverrideConfig = true
+		return nil
+	}
+}
