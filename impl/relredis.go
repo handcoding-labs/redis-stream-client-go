@@ -65,23 +65,22 @@ type RecoverableRedisStreamClient struct {
 	kspChanTimeout time.Duration
 	// logger for plain json logging
 	logger *slog.Logger
+	// forceOverrideConfig indicates if the library should override existing keyspace notifications config
+	forceOverrideConfig bool
 }
 
 // NewRedisStreamClient creates a new RedisStreamClient
 //
 // This function creates a new RedisStreamClient with the given redis client and stream name
 // Stream is the name of the stream to read from where actual data is transmitted
-func NewRedisStreamClient(
-	redisClient redis.UniversalClient,
-	serviceName string,
-	opts ...RecoverableRedisOption,
-) types.RedisStreamClient {
+func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string,
+	opts ...RecoverableRedisOption) (types.RedisStreamClient, error) {
 	// obtain consumer name via kubernetes downward api
 	podName := os.Getenv(configs.PodName)
 	podIP := os.Getenv(configs.PodIP)
 
 	if podName == "" && podIP == "" {
-		panic("POD_NAME or POD_IP not set")
+		return nil, fmt.Errorf("podName or podIP not found in env")
 	}
 
 	var consumerID string
@@ -119,7 +118,7 @@ func NewRedisStreamClient(
 		}
 	}
 
-	return r
+	return r, nil
 }
 
 // ID returns the consumer name that uniquely identifies the consumer
@@ -133,9 +132,7 @@ func (r *RecoverableRedisStreamClient) ID() string {
 // subscribing to expired events, and starting a blocking read on the LBS stream
 // Returns a channel to read messages from the LBS stream. The client should read from this channel and
 // process the messages.
-func (r *RecoverableRedisStreamClient) Init(
-	ctx context.Context,
-) (<-chan notifs.RecoverableRedisNotification, error) {
+func (r *RecoverableRedisStreamClient) Init(ctx context.Context) (<-chan notifs.RecoverableRedisNotification, error) {
 	keyspaceErr := r.enableKeyspaceNotifsForExpiredEvents(ctx)
 	if keyspaceErr != nil {
 		return nil, fmt.Errorf("error while enabling keyspace notifications for expired events: %w", keyspaceErr)
@@ -277,9 +274,7 @@ func (r *RecoverableRedisStreamClient) DoneStream(ctx context.Context, dataStrea
 // Note that done is called when the client is shutting down and is not expected to be called again
 // It cleans up all the streams handled by the client
 // To cleanup a specific stream, use DoneStream
-func (r *RecoverableRedisStreamClient) Done() error {
-	ctx := context.Background()
-
+func (r *RecoverableRedisStreamClient) Done(ctx context.Context) error {
 	// Get all stream names first to avoid holding lock during DoneStream calls
 	r.streamLocksMutex.RLock()
 	streamNames := make([]string, 0, len(r.streamLocks))
