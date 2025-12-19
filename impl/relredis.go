@@ -73,7 +73,8 @@ type RecoverableRedisStreamClient struct {
 //
 // This function creates a new RedisStreamClient with the given redis client and stream name
 // Stream is the name of the stream to read from where actual data is transmitted
-func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string, opts ...RecoverableRedisOption) (types.RedisStreamClient, error) {
+func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string,
+	opts ...RecoverableRedisOption) (types.RedisStreamClient, error) {
 	// obtain consumer name via kubernetes downward api
 	podName := os.Getenv(configs.PodName)
 	podIP := os.Getenv(configs.PodIP)

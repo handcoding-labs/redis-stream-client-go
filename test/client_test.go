@@ -709,7 +709,10 @@ func createConsumer(name string, redisContainer *redis.RedisContainer, opts ...i
 	// create a new redis client
 	// always override config for tests
 	opts = append(opts, impl.WithForceConfigOverride())
-	relredis, _ := impl.NewRedisStreamClient(newRedisClient(redisContainer), "consumer", opts...)
+	relredis, err := impl.NewRedisStreamClient(newRedisClient(redisContainer), "consumer", opts...)
+	if err != nil {
+		return nil
+	}
 	return relredis
 }
 

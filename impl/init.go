@@ -30,7 +30,7 @@ func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx 
 		if len(v) > 0 {
 			// some config for key space notifications already exists, so exit
 			if !r.forceOverrideConfig {
-				return fmt.Errorf("detected existing configuration for key space notifications and force override is disabled; exiting")
+				return fmt.Errorf("detected existing configuration for key space notifications and force override is disabled")
 			} else {
 				slog.Warn("overriding existing keyspace notifications config since force override is set")
 			}
