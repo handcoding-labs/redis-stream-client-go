@@ -3,7 +3,6 @@ package notifs
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"sync/atomic"
 )
@@ -19,6 +18,7 @@ type NotificationBroker struct {
 	wg        *sync.WaitGroup
 	closed    atomic.Bool
 	closeOnce sync.Once
+	quit      chan struct{}
 }
 
 func NewNotificationBroker(output chan<- RecoverableRedisNotification, bufferSize int) *NotificationBroker {
@@ -26,6 +26,7 @@ func NewNotificationBroker(output chan<- RecoverableRedisNotification, bufferSiz
 		input:  make(chan RecoverableRedisNotification, bufferSize),
 		output: output,
 		wg:     &sync.WaitGroup{},
+		quit:   make(chan struct{}),
 	}
 
 	b.wg.Add(1)
@@ -35,28 +36,44 @@ func NewNotificationBroker(output chan<- RecoverableRedisNotification, bufferSiz
 
 func (b *NotificationBroker) run() {
 	defer b.wg.Done()
-	for m := range b.input {
-		b.output <- m
+
+	for {
+		select {
+		case <-b.quit:
+			// drain
+			for {
+				select {
+				case m := <-b.input:
+					b.output <- m
+				default:
+					return
+				}
+			}
+		case m := <-b.input:
+			b.output <- m
+		}
 	}
 }
 
-func (b *NotificationBroker) Send(ctx context.Context, m RecoverableRedisNotification) error {
+func (b *NotificationBroker) Send(ctx context.Context, m RecoverableRedisNotification) bool {
 	if b.closed.Load() {
-		return fmt.Errorf("output chan closed")
+		return false
 	}
 
 	select {
 	case <-ctx.Done():
-		return ErrContextDone
+		return false
+	case <-b.quit:
+		return false
 	case b.input <- m:
-		return nil
+		return true
 	}
 }
 
 func (b *NotificationBroker) Close() {
 	b.closeOnce.Do(func() {
 		b.closed.Store(true)
-		close(b.input)
+		close(b.quit)
 	})
 }
 
