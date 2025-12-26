@@ -24,8 +24,6 @@ func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx 
 		return err
 	}
 
-	fmt.Println(configVals)
-
 	for _, v := range configVals {
 		if len(v) > 0 {
 			// some config for key space notifications already exists, so exit
@@ -105,10 +103,11 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
 }
 
 func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
+
 	for {
 		// check if context is done
 		if r.isContextDone(ctx) {
-			r.checkAndSendToOutputChan(notifs.MakeStreamTerminatedNotif("context done"))
+			r.notificationBroker.Send(ctx, notifs.MakeStreamTerminatedNotif("context done"))
 			return
 		}
 
@@ -122,18 +121,18 @@ func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
 
 		if res.Err() != nil {
 			if errors.Is(res.Err(), context.Canceled) {
-				r.checkAndSendToOutputChan(notifs.MakeStreamTerminatedNotif(context.Canceled.Error()))
+				r.notificationBroker.Send(ctx, notifs.MakeStreamTerminatedNotif(context.Canceled.Error()))
 				return
 			}
 			r.logger.Error("error while reading from LBS", "error", res.Err())
 
-			r.checkAndSendToOutputChan(notifs.MakeStreamTerminatedNotif(res.Err().Error()))
+			r.notificationBroker.Send(ctx, notifs.MakeStreamTerminatedNotif(res.Err().Error()))
 			return
 		}
 
 		if err := r.processLBSMessages(ctx, res.Val(), r.rs); err != nil {
 			r.logger.Error("fatal error while reading lbs", "error", err)
-			r.checkAndSendToOutputChan(notifs.MakeStreamTerminatedNotif(err.Error()))
+			r.notificationBroker.Send(ctx, notifs.MakeStreamTerminatedNotif(err.Error()))
 			return
 		}
 	}
@@ -195,7 +194,7 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(
 			}
 			r.streamLocksMutex.Unlock()
 
-			r.checkAndSendToOutputChan(notifs.Make(notifs.StreamAdded, lbsInfo, lbsMessage.Info))
+			r.notificationBroker.Send(ctx, notifs.Make(notifs.StreamAdded, lbsInfo, lbsMessage.Info))
 
 			// now, keep extending the lock in a separate go routine
 			go func() {
@@ -219,7 +218,7 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 	defer func() {
 		if extensionFailed {
 			// if client is still interested or is coming back from a delay (GC pause etc) then inform about disowning of stream
-			r.checkAndSendToOutputChan(notifs.Make(notifs.StreamDisowned, lbsInfo, additionalInfo))
+			r.notificationBroker.Send(ctx, notifs.Make(notifs.StreamDisowned, lbsInfo, additionalInfo))
 		}
 	}()
 
@@ -247,15 +246,11 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 }
 
 func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
-	defer r.wg.Done()
-
 	for {
 		select {
-		case <-r.quitChan:
-			return
 		case <-ctx.Done():
 			r.logger.Debug("context done, exiting", "consumer_id", r.consumerID)
-			r.checkAndSendToOutputChan(notifs.MakeStreamTerminatedNotif("context done"))
+			r.notificationBroker.Send(ctx, notifs.MakeStreamTerminatedNotif("context done"))
 			return
 		case kspNotif := <-r.kspChan:
 			if kspNotif != nil {
@@ -274,7 +269,7 @@ func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
 				}
 				r.streamLocksMutex.RUnlock()
 
-				r.checkAndSendToOutputChan(notifs.Make(notifs.StreamExpired, lbsInfo, additionalInfo))
+				r.notificationBroker.Send(ctx, notifs.Make(notifs.StreamExpired, lbsInfo, additionalInfo))
 			}
 		}
 	}

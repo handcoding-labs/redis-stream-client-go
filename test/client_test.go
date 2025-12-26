@@ -634,9 +634,10 @@ func TestMainFlow(t *testing.T) {
 				require.Len(t, grpInfo[0].Consumers, 2)
 				var c1, c2 *redisgo.XInfoStreamConsumer
 				for _, c := range grpInfo[0].Consumers {
-					if c.Name == "redis-consumer-111" {
+					switch c.Name {
+					case "redis-consumer-111":
 						c1 = &c
-					} else if c.Name == "redis-consumer-222" {
+					case "redis-consumer-222":
 						c2 = &c
 					}
 
