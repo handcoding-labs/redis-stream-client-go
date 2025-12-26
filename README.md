@@ -30,6 +30,28 @@ In addition to this, for better management, the library provides a load balancer
 
 ![Redis stream client - LBS](./imgs/redis_stream_client_lbs.png)
 
+# Architecture
+
+## NotificationBroker
+
+The library uses an internal `NotificationBroker` component to safely manage notifications from multiple concurrent sources. This ensures thread-safe delivery to the output channel and prevents panics during shutdown.
+
+```
+┌─────────────────────┐     ┌─────────────────────┐
+│  Key Extenders      │────▶│                     │
+│  (one per stream)   │     │                     │
+└─────────────────────┘     │                     │
+                            │  NotificationBroker │────▶ outputChan
+┌─────────────────────┐     │                     │
+│  Keyspace Listener  │────▶│  - Thread-safe      │
+│  (Redis pub/sub)    │     │  - Graceful shutdown│
+└─────────────────────┘     │  - No send panics   │
+                            │                     │
+┌─────────────────────┐     │                     │
+│  LBS Stream Reader  │────▶│                     │
+└─────────────────────┘     └─────────────────────┘
+```
+
 # usage
 
 Just import the library:
@@ -128,12 +150,13 @@ The `Info` field in `LBSInputMessage` allows you to pass additional metadata tha
 
 ## Notification Types
 
-There are currently three types of notifications sent on `outputChan`:
+There are currently four types of notifications sent on `outputChan`:
 1. `StreamAdded` - When a new stream gets added to LBS. You should take the stream and start reading your data from it using standard `XREAD` or `XREADGROUP` commands as applicable. The notification includes:
    - `Payload`: Contains `DataStreamName` and `IDInLBS`
    - `AdditionalInfo`: Contains the `Info` field from the original `LBSInputMessage`
 2. `StreamExpired` - When a client's ownership of stream expires and it relinquishes the lock. This is sent when key space notification arrives on stream expiry. Other clients should process this and take ownership of the stream by using `Claim` API.
 3. `StreamDisowned` - When a client gets stuck (not crashed) and thus automatically relinquishes ownership, another active client will claim it. When the old client comes back, it will fail to extend the lock and thus will be informed that it now doesn't own the stream. The old client should gracefully exit by calling `Done` API.
+4. `StreamTerminated` - Internal notification indicating the notification channel is closing, typically due to context cancellation or fatal errors. Contains additional info about the termination reason.
 
 # claiming
 
@@ -178,7 +201,7 @@ When the client is shutting down completely, call `Done` to clean up all streams
 err := client.Done()
 ```
 
-This method calls `DoneStream` for all active streams and then performs additional cleanup like closing channels and canceling contexts.
+This method calls `DoneStream` for all active streams and then performs additional cleanup like closing channels and canceling contexts. The internal `NotificationBroker` ensures all pending notifications are drained before the output channel is closed.
 
 Method `ID()` can be used to obtain client ID for logging purposes:
 
@@ -259,6 +282,9 @@ func main() {
 
             case notifs.StreamDisowned:
                 slog.Warn("Lost stream ownership", "stream", notification.Payload.DataStreamName)
+            
+            case notifs.StreamTerminated:
+                slog.Info("Notification channel closing", "reason", notification.AdditionalInfo["info"])
             }
         }
     }()
@@ -369,3 +395,7 @@ redis-cli INFO memory
 - Implement timeouts in your processing logic
 - Use context cancellation for graceful shutdowns
 - Monitor processing times and adjust `WithLBSIdleTime` if needed
+
+### Output channel closed unexpectedly
+**Cause**: The internal `NotificationBroker` detected a shutdown condition.
+**Solution**: Check for `StreamTerminated` notifications which contain the reason for closure in `AdditionalInfo["info"]`. Common reasons include context cancellation or Redis connection errors.
