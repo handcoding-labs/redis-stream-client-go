@@ -5,7 +5,7 @@ This example demonstrates the fundamental usage of the Redis Stream Client Go li
 ## What This Example Shows
 
 - How to create and initialize a Redis Stream Client
-- How to handle different types of notifications (StreamAdded, StreamExpired, StreamDisowned)
+- How to handle different types of notifications (StreamAdded, StreamExpired, StreamDisowned, StreamTerminated)
 - Basic stream processing workflow
 - Graceful shutdown handling
 
@@ -89,6 +89,8 @@ if err != nil {
 
 ### 3. Processing Notifications
 
+The library uses an internal `NotificationBroker` to safely deliver notifications from multiple sources (LBS reader, keyspace listener, key extenders) to a single output channel.
+
 ```go
 for notification := range outputChan {
     switch notification.Type {
@@ -105,6 +107,10 @@ for notification := range outputChan {
     case notifs.StreamDisowned:
         // Handle losing stream ownership
         handleStreamDisowned(notification)
+    
+    case notifs.StreamTerminated:
+        // Channel is closing - check reason in notification.AdditionalInfo["info"]
+        slog.Info("Notification channel closing", "reason", notification.AdditionalInfo["info"])
     }
 }
 ```
@@ -119,7 +125,7 @@ signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 // Wait for signal
 <-sigChan
 
-// Clean up
+// Clean up - this ensures all pending notifications are drained
 client.Done()
 ```
 
@@ -127,15 +133,22 @@ client.Done()
 
 ### Load Balancer Stream (LBS)
 - The library uses a special Redis stream called the "Load Balancer Stream"
-- Stream names are distributed among consumers in a round-robin fashion
+- Stream names are distributed among consumers in round-robin fashion
 - Each consumer gets assigned different data streams to process
 - Messages are added to LBS using the `LBSInputMessage` structure with `DataStreamName` and `Info` fields
 - The `Info` field allows passing additional metadata that becomes available in `AdditionalInfo`
+
+### NotificationBroker (Internal)
+- Multiple goroutines produce notifications: LBS reader, keyspace listener, and key extenders
+- The `NotificationBroker` provides thread-safe delivery to the output channel
+- Prevents panics when sending to a closed channel during shutdown
+- Ensures graceful draining of pending notifications before channel closure
 
 ### Notifications
 - **StreamAdded**: A new data stream has been assigned to this consumer
 - **StreamExpired**: Another consumer failed, and their stream is available to claim
 - **StreamDisowned**: This consumer lost ownership of a stream (usually due to network issues)
+- **StreamTerminated**: The notification channel is closing (context cancelled or fatal error)
 
 ### Consumer ID
 - Each consumer needs a unique ID (from POD_NAME or POD_IP environment variables)
@@ -165,3 +178,9 @@ Ensure Redis is running on the correct port:
 ```bash
 redis-server --port 6379
 ```
+
+### Output channel closed unexpectedly
+Check for `StreamTerminated` notifications - they contain the reason for closure. Common causes:
+- Context cancellation
+- Redis connection errors
+- Fatal processing errors

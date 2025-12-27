@@ -49,10 +49,6 @@ type RecoverableRedisStreamClient struct {
 	pubSub *redis.PubSub
 	// outputChan is the channel exposed to clients on which we relay all messages
 	outputChan chan notifs.RecoverableRedisNotification
-	// quitChan tracks if the outputChan is closed
-	quitChan chan struct{}
-	// wg ensures that cleanup can wait till all senders to outputChan are done
-	wg sync.WaitGroup
 	// rs is a shared redsync instance used for distributed locks
 	rs *redsync.Redsync
 	// lbsIdleTime is the time after which a message is considered idle
@@ -61,12 +57,16 @@ type RecoverableRedisStreamClient struct {
 	lbsRecoveryCount int
 	// kspChanSize is the size of kspChan corresponding to redis pub sub channel size
 	kspChanSize int
+	// outputChanSize is the size of the outputChan to which clients listen to
+	outputChanSize int
 	// kspChanTimeout is the duration after which a pub sub message from redis is dropped
 	kspChanTimeout time.Duration
 	// logger for plain json logging
 	logger *slog.Logger
 	// forceOverrideConfig indicates if the library should override existing keyspace notifications config
 	forceOverrideConfig bool
+	// NotificationBroker handles all messaging to clients
+	notificationBroker *notifs.NotificationBroker
 }
 
 // NewRedisStreamClient creates a new RedisStreamClient
@@ -101,9 +101,7 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string,
 		hbInterval:       configs.DefaultHBInterval,
 		streamLocks:      make(map[string]*StreamLocksInfo),
 		serviceName:      serviceName,
-		outputChan:       make(chan notifs.RecoverableRedisNotification, 500),
-		quitChan:         make(chan struct{}),
-		wg:               sync.WaitGroup{},
+		outputChan:       make(chan notifs.RecoverableRedisNotification, configs.DefaultOutputChanSize),
 		rs:               rs,
 		lbsIdleTime:      configs.DefaultLBSIdleTime,
 		lbsRecoveryCount: configs.DefaultLBSRecoveryCount,
@@ -117,6 +115,9 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string,
 			panic(fmt.Sprintf("invalid option: %v", err))
 		}
 	}
+
+	// init the notification broker
+	r.notificationBroker = notifs.NewNotificationBroker(r.outputChan, configs.DefaultOutputChanSize)
 
 	return r, nil
 }
@@ -159,7 +160,6 @@ func (r *RecoverableRedisStreamClient) Init(ctx context.Context) (<-chan notifs.
 	go r.readLBSStream(newCtx)
 
 	// listen to ksp chan
-	r.wg.Add(1)
 	go r.listenKsp(newCtx)
 
 	return r.outputChan, nil
