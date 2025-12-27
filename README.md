@@ -30,6 +30,186 @@ In addition to this, for better management, the library provides a load balancer
 
 ![Redis stream client - LBS](./imgs/redis_stream_client_lbs.png)
 
+# Architecture
+
+## Threading Model
+
+The library spawns multiple goroutines to handle concurrent operations:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         Client Instance                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌─────────────────┐                                            │
+│  │ LBS Reader      │  1 goroutine - reads from Load Balancer    │
+│  │ (blocking read) │  Stream, assigns streams to this consumer  │
+│  └─────────────────┘                                            │
+│                                                                  │
+│  ┌─────────────────┐                                            │
+│  │ Keyspace        │  1 goroutine - listens for Redis key       │
+│  │ Listener        │  expiration events (pub/sub)               │
+│  └─────────────────┘                                            │
+│                                                                  │
+│  ┌─────────────────┐                                            │
+│  │ Key Extender    │  N goroutines - one per active stream      │
+│  │ (stream-1)      │  extends distributed lock every hbInterval │
+│  ├─────────────────┤                                            │
+│  │ Key Extender    │  Goroutines exit when:                     │
+│  │ (stream-2)      │  - DoneStream() called                     │
+│  ├─────────────────┤  - Lock extension fails                    │
+│  │ Key Extender    │  - Context cancelled                       │
+│  │ (stream-N)      │                                            │
+│  └─────────────────┘                                            │
+│                                                                  │
+│  ┌─────────────────┐                                            │
+│  │ Notification    │  1 goroutine - serializes all              │
+│  │ Broker          │  notifications to output channel           │
+│  └─────────────────┘                                            │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+
+Total goroutines per client: 3 + N (where N = active streams)
+```
+
+**Key points:**
+- Each active stream has its own key extender goroutine
+- Goroutines are lightweight (~2KB stack) but scale with stream count
+- All goroutines are properly cleaned up on `Done()` or context cancellation
+
+## NotificationBroker
+
+The library uses an internal `NotificationBroker` component to safely manage notifications from multiple concurrent sources. This ensures thread-safe delivery to the output channel and prevents panics during shutdown.
+
+```
+┌─────────────────────┐     ┌─────────────────────┐
+│  Key Extenders      │────▶│                     │
+│  (one per stream)   │     │                     │
+└─────────────────────┘     │                     │
+                            │  NotificationBroker │────▶ outputChan
+┌─────────────────────┐     │                     │
+│  Keyspace Listener  │────▶│  - Thread-safe      │
+│  (Redis pub/sub)    │     │  - Graceful shutdown│
+└─────────────────────┘     │  - No send panics   │
+                            │                     │
+┌─────────────────────┐     │                     │
+│  LBS Stream Reader  │────▶│                     │
+└─────────────────────┘     └─────────────────────┘
+```
+
+## Backpressure & Slow Consumers
+
+When your consumer processes messages slower than they arrive:
+
+### What happens internally
+
+1. **Output channel fills up** - The output channel has a buffer (default: 500 notifications)
+2. **Broker blocks** - Once full, the NotificationBroker blocks waiting for space
+3. **Upstream backs up** - LBS reader, keyspace listener, and key extenders block on broker
+4. **Redis consumer lag increases** - Messages accumulate in Redis pending entries list (PEL)
+
+### Symptoms of slow consumption
+
+- Growing `XPENDING` count in Redis
+- Increased memory usage in Redis
+- Notifications arriving late (stream expirations delayed)
+- Potential message recovery by other consumers if idle time exceeded
+
+### Mitigation strategies
+
+```go
+// 1. Process notifications concurrently
+for notification := range outputChan {
+    go handleNotification(notification)  // Don't block the reader
+}
+
+// 2. Use worker pool for controlled concurrency
+workerPool := make(chan struct{}, 10)  // 10 concurrent workers
+for notification := range outputChan {
+    workerPool <- struct{}{}
+    go func(n notifs.RecoverableRedisNotification) {
+        defer func() { <-workerPool }()
+        handleNotification(n)
+    }(notification)
+}
+
+// 3. Acknowledge streams promptly
+// Call DoneStream() as soon as processing completes
+client.DoneStream(ctx, streamName)
+```
+
+### Monitoring backpressure
+
+```bash
+# Check pending messages per consumer
+redis-cli XPENDING my-service-input my-service-group
+
+# Check consumer lag
+redis-cli XINFO CONSUMERS my-service-input my-service-group
+```
+
+## Memory Implications
+
+### Buffered Channels
+
+| Channel | Default Size | Memory per Item | Purpose |
+|---------|--------------|-----------------|---------|
+| Output channel | 500 | ~200 bytes | Notifications to consumer |
+| Broker input | 500 | ~200 bytes | Internal broker queue |
+| Keyspace channel | 100 | ~100 bytes | Redis pub/sub messages |
+
+**Approximate memory per client:** ~250KB for channels alone
+
+### Per-Stream Memory
+
+Each active stream consumes:
+- **Goroutine stack:** ~2KB (grows as needed)
+- **Mutex state:** ~200 bytes (redsync mutex)
+- **StreamLocksInfo:** ~150 bytes (LBSInfo + metadata)
+
+**Formula:** `Total = Base(250KB) + Streams × 2.5KB`
+
+| Active Streams | Approximate Memory |
+|----------------|-------------------|
+| 10 | ~275 KB |
+| 100 | ~500 KB |
+| 1,000 | ~2.75 MB |
+| 10,000 | ~25 MB |
+
+### Redis Memory
+
+The library creates Redis keys that consume memory:
+
+- **Mutex keys:** One per active stream, expires after `hbInterval`
+- **LBS stream:** Grows until messages are acknowledged
+- **Consumer group metadata:** Small, fixed overhead
+
+### Memory Management Best Practices
+
+```go
+// 1. Call DoneStream() promptly to release resources
+if err := client.DoneStream(ctx, streamName); err != nil {
+    slog.Error("Failed to release stream", "error", err)
+}
+
+// 2. Monitor active stream count
+// High stream counts = high memory + goroutine usage
+
+// 3. Tune channel sizes if needed (advanced)
+client, err := impl.NewRedisStreamClient(
+    redisClient,
+    "my-service",
+    impl.WithKspChanSize(50),  // Reduce if memory constrained
+)
+
+// 4. Implement circuit breaker for runaway stream counts
+const maxStreams = 1000
+if activeStreamCount > maxStreams {
+    slog.Warn("Too many active streams, rejecting new assignments")
+    // Handle gracefully
+}
+```
+
 # usage
 
 Just import the library:
@@ -128,12 +308,13 @@ The `Info` field in `LBSInputMessage` allows you to pass additional metadata tha
 
 ## Notification Types
 
-There are currently three types of notifications sent on `outputChan`:
+There are currently four types of notifications sent on `outputChan`:
 1. `StreamAdded` - When a new stream gets added to LBS. You should take the stream and start reading your data from it using standard `XREAD` or `XREADGROUP` commands as applicable. The notification includes:
    - `Payload`: Contains `DataStreamName` and `IDInLBS`
    - `AdditionalInfo`: Contains the `Info` field from the original `LBSInputMessage`
 2. `StreamExpired` - When a client's ownership of stream expires and it relinquishes the lock. This is sent when key space notification arrives on stream expiry. Other clients should process this and take ownership of the stream by using `Claim` API.
 3. `StreamDisowned` - When a client gets stuck (not crashed) and thus automatically relinquishes ownership, another active client will claim it. When the old client comes back, it will fail to extend the lock and thus will be informed that it now doesn't own the stream. The old client should gracefully exit by calling `Done` API.
+4. `StreamTerminated` - Internal notification indicating the notification channel is closing, typically due to context cancellation or fatal errors. Contains additional info about the termination reason.
 
 # claiming
 
@@ -178,7 +359,7 @@ When the client is shutting down completely, call `Done` to clean up all streams
 err := client.Done()
 ```
 
-This method calls `DoneStream` for all active streams and then performs additional cleanup like closing channels and canceling contexts.
+This method calls `DoneStream` for all active streams and then performs additional cleanup like closing channels and canceling contexts. The internal `NotificationBroker` ensures all pending notifications are drained before the output channel is closed.
 
 Method `ID()` can be used to obtain client ID for logging purposes:
 
@@ -259,6 +440,9 @@ func main() {
 
             case notifs.StreamDisowned:
                 slog.Warn("Lost stream ownership", "stream", notification.Payload.DataStreamName)
+            
+            case notifs.StreamTerminated:
+                slog.Info("Notification channel closing", "reason", notification.AdditionalInfo["info"])
             }
         }
     }()
@@ -369,3 +553,7 @@ redis-cli INFO memory
 - Implement timeouts in your processing logic
 - Use context cancellation for graceful shutdowns
 - Monitor processing times and adjust `WithLBSIdleTime` if needed
+
+### Output channel closed unexpectedly
+**Cause**: The internal `NotificationBroker` detected a shutdown condition.
+**Solution**: Check for `StreamTerminated` notifications which contain the reason for closure in `AdditionalInfo["info"]`. Common reasons include context cancellation or Redis connection errors.
