@@ -13,12 +13,11 @@ var (
 )
 
 type NotificationBroker struct {
-	input     chan RecoverableRedisNotification
-	output    chan<- RecoverableRedisNotification
-	wg        *sync.WaitGroup
-	closed    atomic.Bool
-	closeOnce sync.Once
-	quit      chan struct{}
+	input  chan RecoverableRedisNotification
+	output chan<- RecoverableRedisNotification
+	wg     *sync.WaitGroup
+	closed atomic.Bool
+	quit   chan struct{}
 }
 
 func NewNotificationBroker(output chan<- RecoverableRedisNotification, bufferSize int) *NotificationBroker {
@@ -46,6 +45,7 @@ func (b *NotificationBroker) run() {
 				case m := <-b.input:
 					b.output <- m
 				default:
+					close(b.input)
 					return
 				}
 			}
@@ -71,10 +71,9 @@ func (b *NotificationBroker) Send(ctx context.Context, m RecoverableRedisNotific
 }
 
 func (b *NotificationBroker) Close() {
-	b.closeOnce.Do(func() {
-		b.closed.Store(true)
+	if b.closed.CompareAndSwap(false, true) {
 		close(b.quit)
-	})
+	}
 }
 
 func (b *NotificationBroker) Wait() {
