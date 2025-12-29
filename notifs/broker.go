@@ -71,11 +71,14 @@ func (b *NotificationBroker) Send(ctx context.Context, m RecoverableRedisNotific
 }
 
 func (b *NotificationBroker) Close() {
+	// notify
 	if b.closed.CompareAndSwap(false, true) {
 		close(b.quit)
 	}
-}
 
-func (b *NotificationBroker) Wait() {
+	// wait for drain
 	b.wg.Wait()
+
+	// close output channel
+	close(b.output)
 }

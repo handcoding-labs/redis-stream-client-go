@@ -31,12 +31,6 @@ func (r *RecoverableRedisStreamClient) isStreamProcessingDone(dataStreamName str
 	return r.streamLocks[dataStreamName] == nil
 }
 
-func (r *RecoverableRedisStreamClient) closeOutputChan() {
-	r.notificationBroker.Close() // stop accepting new sends
-	r.notificationBroker.Wait()  // let run drain the messages from input
-	close(r.outputChan)          // close output channel
-}
-
 // getGoogleCloudLogger returns a slog.Logger that writes to stdout.
 // This logger is compatible with Google Cloud Logging; see
 // https://cloud.google.com/logging/docs/structured-logging for more

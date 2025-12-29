@@ -309,7 +309,7 @@ func (r *RecoverableRedisStreamClient) cleanup() error {
 	}
 
 	// close the output channel
-	r.closeOutputChan()
+	r.notificationBroker.Close()
 
 	// cancel LBS context
 	r.lbsCtxCancelFunc()
