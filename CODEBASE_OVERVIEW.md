@@ -29,6 +29,25 @@ Key files to explore:
 
 ## Architecture
 
+### Threading Model
+
+The library uses a multi-goroutine architecture:
+
+```
+Per Client Instance:
+├── 1 × LBS Reader         - Blocking read on Load Balancer Stream
+├── 1 × Keyspace Listener  - Redis pub/sub for key expirations
+├── 1 × Notification Broker - Serializes notifications to output
+└── N × Key Extenders      - One per active stream (lock heartbeats)
+
+Total: 3 + N goroutines (where N = number of active streams)
+```
+
+**Goroutine lifecycle:**
+- LBS Reader and Keyspace Listener live for the client's lifetime
+- Key Extenders spawn when a stream is assigned, exit on `DoneStream()` or lock failure
+- All goroutines clean up on `Done()` or context cancellation
+
 ### NotificationBroker
 
 The `NotificationBroker` is a key internal component that provides safe, synchronized access to the output notification channel. Multiple goroutines need to send notifications:
@@ -56,6 +75,27 @@ The broker pattern ensures:
 │   readLBSStream     │────▶│                     │
 └─────────────────────┘     └─────────────────────┘
 ```
+
+### Backpressure Handling
+
+When consumer processing is slower than message arrival:
+
+1. Output channel buffer fills (500 notifications)
+2. NotificationBroker blocks on send
+3. Upstream goroutines block waiting for broker
+4. Messages accumulate in Redis pending entries list
+
+**Mitigation:** Process notifications concurrently using worker pools.
+
+### Memory Model
+
+| Component | Memory | Scales With |
+|-----------|--------|-------------|
+| Base channels | ~250 KB | Fixed per client |
+| Per-stream overhead | ~2.5 KB | Active stream count |
+| Goroutine stacks | ~2 KB each | 3 + active streams |
+
+**Example:** 100 active streams ≈ 500 KB total memory
 
 ## Usage Basics
 
