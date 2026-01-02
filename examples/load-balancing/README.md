@@ -9,6 +9,7 @@ This example demonstrates how multiple consumers work together to process stream
 - Producer generating continuous stream of messages
 - Statistics and monitoring of consumer performance
 - Automatic claiming of streams from failed consumers
+- Handling all notification types including StreamTerminated
 
 ## Architecture
 
@@ -20,6 +21,15 @@ Producer → LBS (Load Balancer Stream) → Consumer 1
 ```
 
 The Load Balancer Stream (LBS) distributes incoming stream assignments to available consumers in a round-robin fashion.
+
+### Internal NotificationBroker
+
+Each consumer uses an internal `NotificationBroker` that safely manages notifications from multiple concurrent sources:
+- LBS stream reader
+- Keyspace notification listener  
+- Key extenders (one per active stream)
+
+This ensures thread-safe delivery and graceful shutdown without panics.
 
 ## Prerequisites
 
@@ -117,6 +127,12 @@ Each consumer reports:
 ### 4. Failure Recovery
 If you kill a consumer (Ctrl+C), other consumers will automatically claim its unprocessed streams.
 
+### 5. Graceful Shutdown
+The `NotificationBroker` ensures:
+- All pending notifications are processed before shutdown
+- No panics occur when sending to closing channels
+- Clean resource cleanup
+
 ## Testing Scenarios
 
 ### Scenario 1: Basic Load Balancing
@@ -183,6 +199,10 @@ case notifs.StreamAdded:
 case notifs.StreamExpired:
     client.Claim(ctx, notification.Payload)
     go handleClaimedStream(ctx, client, notification.Payload.DataStreamName, &processedStreams, &streamCount)
+
+// Handle channel termination
+case notifs.StreamTerminated:
+    slog.Info("Notification channel closing", "reason", notification.AdditionalInfo["info"])
 ```
 
 ### Statistics Tracking
@@ -259,6 +279,11 @@ redis-cli CONFIG SET stream-node-max-entries 1000
 - Monitor stream lengths: `redis-cli XLEN <stream-name>`
 - Implement proper message acknowledgment
 - Consider stream trimming for old messages
+
+### Unexpected Channel Closure
+- Check for `StreamTerminated` notifications - they contain the reason
+- Common causes: context cancellation, Redis connection errors
+- The `NotificationBroker` ensures clean shutdown without data loss
 
 ## Next Steps
 

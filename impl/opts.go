@@ -3,6 +3,8 @@ package impl
 import (
 	"fmt"
 	"time"
+
+	"github.com/handcoding-labs/redis-stream-client-go/notifs"
 )
 
 type RecoverableRedisOption func(*RecoverableRedisStreamClient) error
@@ -58,9 +60,24 @@ func WithKspChanTimeout(timeout time.Duration) RecoverableRedisOption {
 	}
 }
 
+// WithForceConfigOverride when set overrides the redis configuration for
+// key space notifications
 func WithForceConfigOverride() RecoverableRedisOption {
 	return func(r *RecoverableRedisStreamClient) error {
 		r.forceOverrideConfig = true
+		return nil
+	}
+}
+
+// WithOutputChanSize lets the clients set the outputChanSize where different
+// notifications are sent
+func WithOutputChanSize(size int) RecoverableRedisOption {
+	return func(r *RecoverableRedisStreamClient) error {
+		if size <= 0 {
+			return fmt.Errorf("outputChan size must be a positive number")
+		}
+
+		r.outputChan = make(chan notifs.RecoverableRedisNotification, size)
 		return nil
 	}
 }
