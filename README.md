@@ -1,35 +1,38 @@
-Interactive demo: https://g.co/gemini/share/999b256cffd3
-
 # redis-stream-client-go
 
 [![Go](https://github.com/handcoding-labs/redis-stream-client-go/actions/workflows/go.yml/badge.svg)](https://github.com/handcoding-labs/redis-stream-client-go/actions/workflows/go.yml)
 
-A redis stream based client that can recover from failures. This lib is based on [go-redis](https://github.com/redis/go-redis) and [redsync](https://github.com/go-redsync/redsync)
+A Redis stream-based client with automatic failure recovery. Built on [go-redis](https://github.com/redis/go-redis) and [redsync](https://github.com/go-redsync/redsync).
 
-Redis streams are awesome! Typically they are used for data written in one end and consumed at other.
+## Problem
 
-![Redis streams normal working](./imgs/redis_stream_normal.png)
+Standard Redis stream recovery via XCLAIM requires:
+1. Crashed consumer to come back up and reclaim
+2. Stuck consumers (GC pauses) block processing
 
-When one (or more) of the consumers fail (crash, get stuck for abnormal period of time), the way to recover is by using XCLAIM (and XAUTOCLAIM) per redis streams. This supposes that your consumers are stateful i.e. they know who they are via a dedicated machine name or IP. This way using XPENDING and XCLAIM you can recover from failed or stuck situations.
+Other available consumers can't help because Redis is pull-based—they don't know recovery is needed.
 
-![Redis streams failure recovery](./imgs/redis_stream_failure_recovery.png)
+## Solution
 
-However, there are two requirements that it doesn't meet:
-1. Recovery depends on how soon the crashed consumer can come back up and claim. This is normally a small time (few seconds) but sometimes it can be high due to startup logic.
-2. When a consumer gets stuck (GC or some such stop-the-world process) then the processing is stuck.
-
-In both situations above, there are other consumers waiting and perhaps availble who can claim and continue processing in real-time. However, due to redis' pull based mechanism they don't know if they need to.
-
-This library aims to provide two such constructs built on top of redis' own data structures:
-1. Inform other consumers that a consumer is dead or stuck via key space notifications.
-2. Provide API to claim the stream being processed.
-
-![Redis streams failure recovery - new](./imgs/redis_stream_failure_recovery-redis-stream-client_way.png)
-
-In addition to this, for better management, the library provides a load balancer stream (LBS) based on redis streams and consumer groups that work in a load balanced fashion which can distribute incoming streams (not stream data!) among existing consumers using round-robin fashion.
+This library provides:
+1. **Keyspace notifications** - Inform other consumers when a consumer dies or gets stuck
+2. **Claim API** - Allow any consumer to claim orphaned streams
+3. **Load Balancer Stream (LBS)** - Distribute streams across consumers via round-robin
 
 ![Redis stream client - LBS](./imgs/redis_stream_client_lbs.png)
 
+## Quick Start
+
+```go
+client, _ := impl.NewRedisStreamClient(redisClient, "my-service")
+outputChan, _ := client.Init(ctx)
+
+for notification := range outputChan {
+    switch notification.Type {
+    case notifs.StreamAdded:
+        go process(notification.Payload.DataStreamName)
+    case notifs.StreamExpired:
+        client.Claim(ctx, notification.Payload)
 # Architecture
 
 ## Threading Model
@@ -480,74 +483,33 @@ func addTestMessage(ctx context.Context, redisClient redis.UniversalClient) {
             "user_id":  "user-123",
         },
     }
-
-    messageData, _ := json.Marshal(lbsMessage)
-    redisClient.XAdd(ctx, &redis.XAddArgs{
-        Stream: "example-service-input",
-        Values: map[string]interface{}{
-            "lbs-input": string(messageData),
-        },
-    })
 }
 ```
 
-# Troubleshooting
+## Documentation
 
-## Common Issues
+| Document | Description |
+|----------|-------------|
+| [Architecture](./docs/ARCHITECTURE.md) | Threading model, NotificationBroker, internal design |
+| [Usage Guide](./docs/USAGE.md) | API reference, configuration, notification types |
+| [Operations](./docs/OPERATIONS.md) | Memory, limits, backpressure, troubleshooting |
+| [Example](./docs/EXAMPLE.md) | Complete working example |
 
-### "POD_NAME or POD_IP not set"
-**Solution**: Set one of the required environment variables:
+## Installation
+
 ```bash
-export POD_NAME=my-consumer-$(date +%s)
-# OR
-export POD_IP=$(hostname -I | awk '{print $1}')
+go get github.com/handcoding-labs/redis-stream-client-go
 ```
 
-### No notifications received
-**Possible causes**:
-1. **Keyspace notifications not enabled**: Ensure `notify-keyspace-events` is set to `Ex`
-2. **No messages in LBS**: Check if messages are being added to the `<service-name>-input` stream
-3. **Consumer group issues**: Verify the consumer group exists and is properly configured
+## Requirements
 
-**Debug commands**:
-```bash
-# Check keyspace notifications
-redis-cli CONFIG GET notify-keyspace-events
+- Go 1.21+
+- Redis 6.0+ with keyspace notifications enabled (`notify-keyspace-events Ex`)
+- Environment variable: `POD_NAME` or `POD_IP`
 
-# Check LBS stream
-redis-cli XINFO STREAM my-service-input
+## License
 
-# Check consumer group
-redis-cli XINFO GROUPS my-service-input
-```
-
-### "Failed to claim expired stream" errors
-**Cause**: Multiple consumers trying to claim the same expired stream simultaneously.
-**Solution**: This is expected behavior - only one consumer can claim a stream. Handle the error gracefully.
-
-### High memory usage
-**Causes**:
-1. **Streams not being acknowledged**: Ensure `DoneStream()` is called after processing
-2. **Large number of pending messages**: Check with `XPENDING` command
-3. **Old messages not trimmed**: Consider implementing stream trimming
-
-**Monitoring commands**:
-```bash
-# Check pending messages
-redis-cli XPENDING my-service-input my-service-group
-
-# Check stream length
-redis-cli XLEN my-service-input
-
-# Check memory usage
-redis-cli INFO memory
-```
-
-### Consumer appears stuck
-**Possible causes**:
-1. **Network issues**: Check Redis connectivity
-2. **Long-running processing**: Ensure processing completes within idle time limits
-3. **Deadlocks**: Review your processing logic for potential deadlocks
+LGPL-2.1
 
 **Solutions**:
 - Implement timeouts in your processing logic

@@ -89,6 +89,9 @@ if err != nil {
 ```
 
 ### 2. **Message Processing**
+
+The library uses an internal `NotificationBroker` that safely delivers notifications from multiple concurrent sources (LBS reader, keyspace listener, key extenders) to a single output channel.
+
 ```go
 for notification := range outputChan {
     switch notification.Type {
@@ -97,10 +100,14 @@ for notification := range outputChan {
         handleNewStream(notification.Payload)
     case notifs.StreamExpired:
         // Another consumer failed, claim their stream
-        client.Claim(ctx, notification.Payload.(string))
+        client.Claim(ctx, notification.Payload)
     case notifs.StreamDisowned:
         // This consumer lost ownership
         handleStreamLoss()
+    case notifs.StreamTerminated:
+        // Notification channel is closing
+        // Check notification.AdditionalInfo["info"] for reason
+        slog.Info("Channel closing", "reason", notification.AdditionalInfo["info"])
     }
 }
 ```
@@ -109,6 +116,33 @@ for notification := range outputChan {
 ```go
 defer client.Done()
 ```
+
+The `Done()` method ensures all pending notifications are drained before the output channel is closed.
+
+## Architecture: NotificationBroker
+
+The library uses an internal `NotificationBroker` to manage concurrent notification sources:
+
+```
+┌─────────────────────┐     
+│  Key Extenders      │────▶│                     │
+│  (one per stream)   │     │                     │
+└─────────────────────┘     │                     │
+                            │  NotificationBroker │────▶ outputChan ────▶ Your App
+┌─────────────────────┐     │                     │
+│  Keyspace Listener  │────▶│  Thread-safe        │
+│  (Redis pub/sub)    │     │  Graceful shutdown  │
+└─────────────────────┘     │  No send panics     │
+                            │                     │
+┌─────────────────────┐     │                     │
+│  LBS Stream Reader  │────▶│                     │
+└─────────────────────┘     └─────────────────────┘
+```
+
+This ensures:
+- Thread-safe writes to the output channel
+- No panics when sending to a closed channel during shutdown
+- Graceful draining of pending notifications
 
 ## Testing with Multiple Consumers
 
@@ -131,7 +165,7 @@ To test load balancing and failure recovery:
 3. **Terminal 3 (Producer):**
    ```bash
    cd examples/load-balancing
-   go run producer.go
+   go run main.go producer
    ```
 
 ## Troubleshooting
@@ -153,6 +187,10 @@ To test load balancing and failure recovery:
 4. **Tests failing**
    - Ensure no other Redis clients are using the same consumer group
    - Clear Redis data: `FLUSHALL`
+
+5. **Output channel closed unexpectedly**
+   - Check for `StreamTerminated` notifications which contain the reason
+   - Common causes: context cancellation, Redis connection errors
 
 ### Debug Mode
 
@@ -176,6 +214,7 @@ When adding new examples:
 3. Add the example to this main README
 4. Ensure the example is self-contained and well-documented
 5. Test the example thoroughly
+6. Handle all notification types including `StreamTerminated`
 
 ## Support
 
