@@ -91,6 +91,10 @@ func runConsumer() {
 	var streamCount int32
 
 	// Process notifications
+	// The internal NotificationBroker ensures thread-safe delivery from multiple sources:
+	// - LBS stream reader
+	// - Keyspace notification listener
+	// - Key extenders (one per active stream)
 	go func() {
 		for notification := range outputChan {
 			switch notification.Type {
@@ -109,8 +113,18 @@ func runConsumer() {
 
 			case notifs.StreamDisowned:
 				slog.Warn("❌ Stream disowned", "consumer_id", consumerID, "payload", notification.Payload)
+
+			case notifs.StreamTerminated:
+				// This notification indicates the channel is closing
+				// The reason is available in AdditionalInfo
+				reason := "unknown"
+				if info, ok := notification.AdditionalInfo["info"].(string); ok {
+					reason = info
+				}
+				slog.Info("📴 Notification channel terminating", "consumer_id", consumerID, "reason", reason)
 			}
 		}
+		slog.Info("Notification channel closed", "consumer_id", consumerID)
 	}()
 
 	// Print statistics periodically
@@ -121,6 +135,8 @@ func runConsumer() {
 	slog.Info("🛑 Shutdown signal received, cleaning up...", "consumer_id", consumerID)
 
 	// Graceful shutdown
+	// Done() ensures all pending notifications are drained via the NotificationBroker
+	// before the output channel is closed
 	if err := client.Done(ctx); err != nil {
 		slog.Error("❌ Error during cleanup", "consumer_id", consumerID, "error", err)
 	} else {
