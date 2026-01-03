@@ -45,6 +45,7 @@ for notification := range outputChan {
 | [Usage Guide](./docs/USAGE.md) | API reference, configuration, notification types |
 | [Operations](./docs/OPERATIONS.md) | Memory, limits, backpressure, troubleshooting |
 | [Example](./docs/EXAMPLE.md) | Complete working example |
+| [Codebase Overview](./docs/CODEBASE_OVERVIEW.md) | Codebase overview |
 
 ## Installation
 
