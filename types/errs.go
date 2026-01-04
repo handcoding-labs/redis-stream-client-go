@@ -6,7 +6,7 @@ var (
 	ErrEnablingKeySpaceNotification  = errors.New("enabling keyspace notifications failed, ensure you have right access")
 	ErrGettingUnackedMessages        = errors.New("error getting unacked messages from LBS")
 	ErrProcessingLBSMessages         = errors.New("error processing LBS messages")
-	ErrExistingConfigWithoutOverride = errors.New("existing configuration detected without force override option; aborting")
+	ErrExistingConfigWithoutOverride = errors.New("existing configuration detected without force override option")
 	ErrInvalidKeyForLBSMessage       = errors.New("invalid key for LBS; must be `lbs-input`")
 	ErrInvalidLBSMessage             = errors.New("invalid or malformed LBS message")
 	ErrUnmarshallingLBSMessage       = errors.New("failed to marshal LBS message")
