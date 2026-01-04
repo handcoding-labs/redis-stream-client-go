@@ -19,9 +19,8 @@ func (l *LBSInfo) FormMutexKey() string {
 
 func CreateByKspNotification(mutexKey string) (LBSInfo, error) {
 	parts := strings.Split(mutexKey, configs.MutexKeySep)
-	// must be in format: data_stream_name:message_id_in_lbs
 	if len(parts) == 1 || len(parts) > 2 {
-		return LBSInfo{}, fmt.Errorf("invalid mutex key format: %s", mutexKey)
+		return LBSInfo{}, fmt.Errorf("invalid ksp format: must be datastream_name<MUTEX_KEY_SEP>message_id_in_lbs")
 	}
 
 	return LBSInfo{
@@ -32,7 +31,7 @@ func CreateByKspNotification(mutexKey string) (LBSInfo, error) {
 
 func CreateByParts(dataStreamName string, idInLBS string) (LBSInfo, error) {
 	if len(dataStreamName) == 0 || len(idInLBS) == 0 {
-		return LBSInfo{}, fmt.Errorf("no data to create lbsInfo")
+		return LBSInfo{}, fmt.Errorf("malformed or incomplete LBS message")
 	}
 
 	return LBSInfo{
