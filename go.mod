@@ -5,7 +5,6 @@ go 1.24.11
 require (
 	github.com/redis/go-redis/v9 v9.6.3
 	github.com/testcontainers/testcontainers-go/modules/redis v0.32.0
-	golang.org/x/sync v0.16.0
 )
 
 require (
