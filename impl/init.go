@@ -220,14 +220,11 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 	additionalInfo map[string]any,
 ) error {
 	extensionFailed := false
-	defer func() error {
+	defer func() {
 		if extensionFailed {
 			// if client is still interested or is coming back from a delay (GC pause etc) then inform about disowning of stream
 			r.notificationBroker.Send(ctx, notifs.Make(notifs.StreamDisowned, lbsInfo, additionalInfo))
-			return types.ErrExtensionFailed
 		}
-
-		return nil
 	}()
 
 	for {
