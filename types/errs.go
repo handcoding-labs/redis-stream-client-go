@@ -1,0 +1,31 @@
+package types
+
+import "errors"
+
+var (
+	ErrEnablingKeySpaceNotification  = errors.New("enabling keyspace notifications failed, ensure you have right access")
+	ErrGettingUnackedMessages        = errors.New("error getting unacked messages from LBS")
+	ErrProcessingLBSMessages         = errors.New("error processing LBS messages")
+	ErrExistingConfigWithoutOverride = errors.New("existing configuration detected without force override option; aborting")
+	ErrInvalidKeyForLBSMessage       = errors.New("invalid key for LBS; must be `lbs-input`")
+	ErrInvalidLBSMessage             = errors.New("invalid or malformed LBS message")
+	ErrUnmarshallingLBSMessage       = errors.New("failed to marshal LBS message")
+	ErrNoDatastreamInLBSMessage      = errors.New("lbs message does not have data stream name")
+	ErrFailedToLockMutex             = errors.New("failed to lock mutex")
+	ErrExtensionFailed               = errors.New("failed to extend the mutex lock")
+	ErrContextDone                   = errors.New("context is done; exiting")
+	ErrInvalidIdleTime               = errors.New("invalid heartbeat interval value: must be >0 and <2*heartbeat interval")
+	ErrInvalidRecoveryCount          = errors.New("invalid recovery count: must be non-zero positive integer")
+	ErrInvalidKspChanSize            = errors.New("invalid ksp chan size: must be non-zero positive integer")
+	ErrInvalidKspChanTimeout         = errors.New("invalid ksp chan timeout: must be greater than or equal to 1 min")
+	ErrInvalidOutputChanSize         = errors.New("invalid output chan size: must be non-zero positive integer")
+	ErrPodConfigMissing              = errors.New("pod name or pod IP is missing")
+	ErrCreatingLBSStream             = errors.New("error creating LBS stream")
+	ErrClaimingStream                = errors.New("error claiming a stream")
+	ErrReadingClaimedStreamResult    = errors.New("error reading Result from claimed stream")
+	ErrAlreadyClaimed                = errors.New("already claimed")
+	ErrDataStreamNotFound            = errors.New("data stream not found")
+	ErrUnlockingStream               = errors.New("error unlocking mutex for stream")
+	ErrAckingStream                  = errors.New("error acknowledging stream")
+	ErrClosingRedisPubsub            = errors.New("error closing pub sub")
+)
