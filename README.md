@@ -1,6 +1,6 @@
 # redis-stream-client-go
 
-[![Go](https://github.com/handcoding-labs/redis-stream-client-go/actions/workflows/go.yml/badge.svg)](https://github.com/handcoding-labs/redis-stream-client-go/actions/workflows/go.yml)
+[![Go](https://github.com/handcoding-labs/redis-stream-client-go/actions/workflows/go.yml/badge.svg)](https://github.com/handcoding-labs/redis-stream-client-go/actions/workflows/go.yml) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/handcoding-labs/redis-stream-client-go/badge)](https://scorecard.dev/viewer/?uri=github.com/handcoding-labs/redis-stream-client-go)
 
 A Redis stream-based client with automatic failure recovery. Built on [go-redis](https://github.com/redis/go-redis) and [redsync](https://github.com/go-redsync/redsync).
 
