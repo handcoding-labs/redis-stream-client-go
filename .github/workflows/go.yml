@@ -12,6 +12,9 @@ on:
     # Run security scans daily at 2 AM UTC
     - cron: '0 2 * * *'
 
+permissions:
+  contents: read  # Minimal permission needed
+
 env:
   GO_VERSION: '1.24.11'  # Single version for consistency
   GOLANGCI_LINT_VERSION: 'latest'
