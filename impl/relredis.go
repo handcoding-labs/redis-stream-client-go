@@ -242,19 +242,13 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs
 // This function is used to mark the end of processing for a particular stream
 // It unlocks the stream and acknowledges the message and cleans up internal state
 func (r *RecoverableRedisStreamClient) DoneStream(ctx context.Context, dataStreamName string) error {
-	r.streamLocksMutex.Lock()
-	streamLocksInfo, ok := r.streamLocks[dataStreamName]
-	if !ok {
-		r.streamLocksMutex.Unlock()
-		return types.ErrDataStreamNotFound
+	streamLocksInfo, err := r.popStreamLocksInfo(dataStreamName)
+	if err != nil {
+		return err
 	}
 
-	// delete volatile key from streamLocks
-	delete(r.streamLocks, dataStreamName)
-	r.streamLocksMutex.Unlock()
-
 	// unlock the stream
-	_, err := streamLocksInfo.Mutex.Unlock()
+	_, err = streamLocksInfo.Mutex.Unlock()
 	if err != nil && !errors.Is(errors.Unwrap(err), redsync.ErrLockAlreadyExpired) {
 		r.logger.Error("error unlocking stream", "error", err.Error())
 		return types.ErrUnlockingStream
@@ -294,27 +288,6 @@ func (r *RecoverableRedisStreamClient) Done(ctx context.Context) error {
 	if err := r.cleanup(); err != nil {
 		return err
 	}
-
-	return nil
-}
-
-func (r *RecoverableRedisStreamClient) cleanup() error {
-	if err := r.pubSub.Close(); err != nil {
-		r.logger.Error("error closing redis pub sub")
-		return types.ErrClosingRedisPubsub
-	}
-
-	// drain kspchan and ignore expired notifications
-	// since client has called Done and thus are no longer interested in expired notifications
-	for len(r.kspChan) > 0 {
-		<-r.kspChan
-	}
-
-	// close the output channel
-	r.notificationBroker.Close()
-
-	// cancel LBS context
-	r.lbsCtxCancelFunc()
 
 	return nil
 }
