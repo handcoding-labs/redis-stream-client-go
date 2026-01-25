@@ -42,15 +42,19 @@ func (b *NotificationBroker) run() {
 			// drain
 			for {
 				select {
-				case m := <-b.input:
-					b.output <- m
+				case m, ok := <-b.input:
+					if ok && !m.IsZero() {
+						b.output <- m
+					}
 				default:
 					close(b.input)
 					return
 				}
 			}
-		case m := <-b.input:
-			b.output <- m
+		case m, ok := <-b.input:
+			if ok && !m.IsZero() {
+				b.output <- m
+			}
 		}
 	}
 }
