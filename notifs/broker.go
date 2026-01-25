@@ -49,10 +49,8 @@ func (b *NotificationBroker) run() {
 					return
 				}
 			}
-		case m, ok := <-b.input:
-			if ok {
-				b.output <- m
-			}
+		case m := <-b.input:
+			b.output <- m
 		}
 	}
 }
