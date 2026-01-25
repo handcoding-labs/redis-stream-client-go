@@ -227,7 +227,10 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 		}
 
 		// cleanup internal state
-		r.popStreamLocksInfo(lbsInfo.DataStreamName)
+		_, err := r.popStreamLocksInfo(lbsInfo.DataStreamName)
+		if err != nil {
+			slog.Warn("error cleaning up internal state", "error", err)
+		}
 	}()
 
 	for {
