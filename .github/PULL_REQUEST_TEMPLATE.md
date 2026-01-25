@@ -1,5 +1,5 @@
 ## Description
-Brief description of changes
+<!-- Brief description of changes -->
 
 ## Type of Change
 - [ ] Bug fix
