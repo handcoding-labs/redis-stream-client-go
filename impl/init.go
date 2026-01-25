@@ -225,6 +225,12 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 			// if client is still interested or is coming back from a delay (GC pause etc) then inform about disowning of stream
 			r.notificationBroker.Send(ctx, notifs.Make(notifs.StreamDisowned, lbsInfo, additionalInfo))
 		}
+
+		// cleanup internal state
+		_, err := r.popStreamLocksInfo(lbsInfo.DataStreamName)
+		if err != nil && errors.Is(err, types.ErrCleaningUp) {
+			r.notificationBroker.Send(ctx, notifs.MakeStreamTerminatedNotif(err.Error()))
+		}
 	}()
 
 	for {
@@ -255,7 +261,6 @@ func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			r.logger.Debug("context done, exiting", "consumer_id", r.consumerID)
-			r.notificationBroker.Send(ctx, notifs.MakeStreamTerminatedNotif("context done"))
 			return
 		case kspNotif := <-r.kspChan:
 			if kspNotif != nil {

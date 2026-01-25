@@ -472,6 +472,7 @@ func TestKspNotifsBulk(t *testing.T) {
 			}
 		}
 
+		slog.Debug("totalActual = ", "totalActual", totalActual)
 		if totalActual == 0 {
 			done = true
 		}

@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
+	"github.com/handcoding-labs/redis-stream-client-go/types"
 )
 
 func (r *RecoverableRedisStreamClient) lbsGroupName() string {
@@ -23,6 +24,43 @@ func (r *RecoverableRedisStreamClient) isContextDone(ctx context.Context) bool {
 	default:
 		return false
 	}
+}
+
+func (r *RecoverableRedisStreamClient) cleanup() error {
+	if err := r.pubSub.Close(); err != nil {
+		r.logger.Error("error closing redis pub sub")
+		return types.ErrClosingRedisPubsub
+	}
+
+	// drain kspchan and ignore expired notifications
+	// since client has called Done and thus are no longer interested in expired notifications
+	for len(r.kspChan) > 0 {
+		<-r.kspChan
+	}
+
+	// close the output channel
+	r.notificationBroker.Close()
+
+	// cancel LBS context
+	r.lbsCtxCancelFunc()
+
+	return nil
+}
+
+// popStreamLocksInfo removes the datastream from streamLocks map (internal state) and returns the value
+func (r *RecoverableRedisStreamClient) popStreamLocksInfo(dataStreamName string) (*StreamLocksInfo, error) {
+	r.streamLocksMutex.Lock()
+	streamLocksInfo, ok := r.streamLocks[dataStreamName]
+	if !ok {
+		r.streamLocksMutex.Unlock()
+		return nil, types.ErrDataStreamNotFound
+	}
+
+	// delete volatile key from streamLocks
+	delete(r.streamLocks, dataStreamName)
+	r.streamLocksMutex.Unlock()
+
+	return streamLocksInfo, nil
 }
 
 func (r *RecoverableRedisStreamClient) isStreamProcessingDone(dataStreamName string) bool {

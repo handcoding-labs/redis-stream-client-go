@@ -28,4 +28,5 @@ var (
 	ErrUnlockingStream               = errors.New("error unlocking mutex for stream")
 	ErrAckingStream                  = errors.New("error acknowledging stream")
 	ErrClosingRedisPubsub            = errors.New("error closing pub sub")
+	ErrCleaningUp                    = errors.New("error cleaning up internal state")
 )
