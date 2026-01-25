@@ -38,13 +38,13 @@ log.Fatal(err)
 
 ```go
 client, err := impl.NewRedisStreamClient(
-redisClient,
-"my-service",
-impl.WithLBSIdleTime(30*time.Second),        // Default: 40s
-impl.WithLBSRecoveryCount(500),              // Default: 1000
-impl.WithMaxRetries(10),                     // Default: 5
-impl.WithInitialRetryDelay(200*time.Millisecond), // Default: 100ms
-impl.WithMaxRetryDelay(1*time.Minute),       // Default: 30s
+    redisClient, 
+    "my-service",
+    impl.WithLBSIdleTime(30*time.Second),        // Default: 40s
+    impl.WithLBSRecoveryCount(500),              // Default: 1000
+    impl.WithMaxRetries(10),                     // Default: 5
+    impl.WithInitialRetryDelay(200*time.Millisecond), // Default: 100ms
+    impl.WithMaxRetryDelay(1*time.Minute),       // Default: 30s
 )
 ```
 
@@ -67,7 +67,7 @@ impl.WithMaxRetryDelay(1*time.Minute),       // Default: 30s
 ```go
 outputChan, err := client.Init(ctx)
 if err != nil {
-log.Fatal(err)
+    log.Fatal(err)
 }
 ```
 
@@ -86,27 +86,27 @@ Returns a channel that receives notifications about stream events.
 
 ```go
 for notification := range outputChan {
-switch notification.Type {
-case notifs.StreamAdded:
-// New stream assigned to this consumer
-go processStream(notification.Payload.DataStreamName)
-
-case notifs.StreamExpired:
-// Another consumer died, try to claim their stream
-if err := client.Claim(ctx, notification.Payload); err != nil {
-log.Warn("Claim failed", "error", err)
-} else {
-go processStream(notification.Payload.DataStreamName)
-}
-
-case notifs.StreamDisowned:
-// We lost ownership (were stuck too long)
-cancelProcessing(notification.Payload.DataStreamName)
-
-case notifs.StreamTerminated:
-// Channel closing, shutdown
-log.Info("Shutting down", "reason", notification.AdditionalInfo["info"])
-}
+    switch notification.Type {
+    case notifs.StreamAdded:
+        // New stream assigned to this consumer
+        go processStream(notification.Payload.DataStreamName)
+        
+    case notifs.StreamExpired:
+        // Another consumer died, try to claim their stream
+        if err := client.Claim(ctx, notification.Payload); err != nil {
+            log.Warn("Claim failed", "error", err)
+        } else {
+            go processStream(notification.Payload.DataStreamName)
+        }
+        
+    case notifs.StreamDisowned:
+        // We lost ownership (were stuck too long)
+        cancelProcessing(notification.Payload.DataStreamName)
+        
+    case notifs.StreamTerminated:
+        // Channel closing, shutdown
+        log.Info("Shutting down", "reason", notification.AdditionalInfo["info"])
+    }
 }
 ```
 
@@ -114,8 +114,8 @@ log.Info("Shutting down", "reason", notification.AdditionalInfo["info"])
 
 ```go
 type LBSInfo struct {
-DataStreamName string // Name of the data stream
-IDInLBS        string // Message ID in Load Balancer Stream
+    DataStreamName string // Name of the data stream
+    IDInLBS        string // Message ID in Load Balancer Stream
 }
 ```
 
@@ -129,19 +129,19 @@ Producers add streams to the LBS for distribution:
 import "github.com/handcoding-labs/redis-stream-client-go/notifs"
 
 lbsMessage := notifs.LBSInputMessage{
-DataStreamName: "user-session-123",
-Info: map[string]interface{}{
-"user_id":  "user-456",
-"priority": "high",
-},
+    DataStreamName: "user-session-123",
+    Info: map[string]interface{}{
+        "user_id":  "user-456",
+        "priority": "high",
+    },
 }
 
 messageData, _ := json.Marshal(lbsMessage)
 redisClient.XAdd(ctx, &redis.XAddArgs{
-Stream: "my-service-input",  // <service_name>-input
-Values: map[string]interface{}{
-"lbs-input": string(messageData),
-},
+    Stream: "my-service-input",  // <service_name>-input
+    Values: map[string]interface{}{
+        "lbs-input": string(messageData),
+    },
 })
 ```
 
@@ -151,13 +151,13 @@ When `StreamExpired` notification arrives:
 
 ```go
 case notifs.StreamExpired:
-if err := client.Claim(ctx, notification.Payload); err != nil {
-// Another consumer got there first - expected behavior
-log.Debug("Claim failed", "error", err)
-} else {
-log.Info("Claimed stream", "stream", notification.Payload.DataStreamName)
-go processStream(notification.Payload.DataStreamName)
-}
+    if err := client.Claim(ctx, notification.Payload); err != nil {
+        // Another consumer got there first - expected behavior
+        log.Debug("Claim failed", "error", err)
+    } else {
+        log.Info("Claimed stream", "stream", notification.Payload.DataStreamName)
+        go processStream(notification.Payload.DataStreamName)
+    }
 ```
 
 Claim failures are normal—multiple consumers race to claim expired streams.
