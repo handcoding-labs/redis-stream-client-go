@@ -227,10 +227,7 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 		}
 
 		// cleanup internal state
-		_, err := r.popStreamLocksInfo(lbsInfo.DataStreamName)
-		if err != nil && errors.Is(err, types.ErrDataStreamNotFound) {
-			r.notificationBroker.Send(ctx, notifs.MakeStreamTerminatedNotif(err.Error()))
-		}
+		r.popStreamLocksInfo(lbsInfo.DataStreamName)
 	}()
 
 	for {

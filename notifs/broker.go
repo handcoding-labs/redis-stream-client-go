@@ -43,7 +43,7 @@ func (b *NotificationBroker) run() {
 			for {
 				select {
 				case m, ok := <-b.input:
-					if ok && !m.IsZero() {
+					if ok {
 						b.output <- m
 					}
 				default:
@@ -52,7 +52,7 @@ func (b *NotificationBroker) run() {
 				}
 			}
 		case m, ok := <-b.input:
-			if ok && !m.IsZero() {
+			if ok {
 				b.output <- m
 			}
 		}
