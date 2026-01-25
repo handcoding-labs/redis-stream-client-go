@@ -188,7 +188,7 @@ go test -bench=. ./...
 
 ### Pull Request Template
 
-When creating a PR, make sure to follow the [pull request template](.github/PULL_REQUEST_TEMPLATE.md) present on GitHub to write the description.
+When creating a PR, make sure to follow the [pull request template](.github/PULL_REQUEST_TEMPLATE.md) presented on GitHub to write the description.
 
 ## 🐛 Bug Reports
 
