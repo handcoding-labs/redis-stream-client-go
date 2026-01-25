@@ -81,3 +81,41 @@ func WithOutputChanSize(size int) RecoverableRedisOption {
 		return nil
 	}
 }
+
+// WithMaxRetries sets the maximum number of retries for LBS stream read errors
+// Set to 0 to disable retries and fail immediately on errors (not recommended)
+// Set to -1 for unlimited retries
+func WithMaxRetries(maxRetries int) RecoverableRedisOption {
+	return func(r *RecoverableRedisStreamClient) error {
+		if maxRetries < -1 {
+			return fmt.Errorf("maxRetries must be -1 (unlimited) or >= 0")
+		}
+
+		r.maxRetries = maxRetries
+		return nil
+	}
+}
+
+// WithInitialRetryDelay sets the initial delay before retrying after an error
+func WithInitialRetryDelay(delay time.Duration) RecoverableRedisOption {
+	return func(r *RecoverableRedisStreamClient) error {
+		if delay <= 0 {
+			return fmt.Errorf("initialRetryDelay must be greater than 0")
+		}
+
+		r.initialRetryDelay = delay
+		return nil
+	}
+}
+
+// WithMaxRetryDelay sets the maximum delay between retries
+func WithMaxRetryDelay(delay time.Duration) RecoverableRedisOption {
+	return func(r *RecoverableRedisStreamClient) error {
+		if delay <= 0 {
+			return fmt.Errorf("maxRetryDelay must be greater than 0")
+		}
+
+		r.maxRetryDelay = delay
+		return nil
+	}
+}

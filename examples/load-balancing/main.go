@@ -73,7 +73,12 @@ func runConsumer() {
 	}
 
 	// Create Redis Stream Client
-	client, err := impl.NewRedisStreamClient(redisClient, "load-balance-demo")
+	client, err := impl.NewRedisStreamClient(
+		redisClient,
+		"load-balance-demo",
+		impl.WithMaxRetries(-1),
+		impl.WithForceConfigOverride(),
+	)
 	if err != nil {
 		slog.Error("could not initialize", "error", err.Error())
 	}

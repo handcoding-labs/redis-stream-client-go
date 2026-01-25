@@ -25,4 +25,7 @@ const (
 	DefaultKspChanSize              = 100
 	DefaultKspChanTimeout           = 10 * time.Minute
 	DefaultOutputChanSize           = 500
+	DefaultMaxRetries               = 5
+	DefaultInitialRetryDelay        = 100 * time.Millisecond
+	DefaultMaxRetryDelay            = 30 * time.Second
 )
