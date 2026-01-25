@@ -30,7 +30,7 @@ import rsc "github.com/handcoding-labs/redis-stream-client-go/impl"
 
 client, err := rsc.NewRedisStreamClient(redisClient, "my-service")
 if err != nil {
-log.Fatal(err)
+    log.Fatal(err)
 }
 ```
 
@@ -198,9 +198,9 @@ sigChan := make(chan os.Signal, 1)
 signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 go func() {
-for notification := range outputChan {
-// handle notifications
-}
+    for notification := range outputChan {
+        // handle notifications
+    }
 }()
 
 <-sigChan
