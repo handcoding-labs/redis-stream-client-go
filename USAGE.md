@@ -43,9 +43,9 @@ client, err := impl.NewRedisStreamClient(
     impl.WithLBSIdleTime(30*time.Second),        // Default: 40s
     impl.WithLBSRecoveryCount(500),              // Default: 1000
     impl.WithRetryConfig(impl.RetryConfig{
-        MaxRetries:        -1,
-        InitialRetryDelay: 100*time.Millisecond,
-        MaxRetryDelay:     30*time.Second,
+        MaxRetries:        -1,                   // Default: 5
+        InitialRetryDelay: 100*time.Millisecond, // Default: 100 * time.Millisecond
+        MaxRetryDelay:     30*time.Second,       // Default: 30 * time.Second
     }),
 )
 ```
