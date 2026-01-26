@@ -27,11 +27,6 @@ func (r *RecoverableRedisStreamClient) isContextDone(ctx context.Context) bool {
 }
 
 func (r *RecoverableRedisStreamClient) cleanup() error {
-	if err := r.pubSub.Close(); err != nil {
-		r.logger.Error("error closing redis pub sub")
-		return types.ErrClosingRedisPubsub
-	}
-
 	// drain kspchan and ignore expired notifications
 	// since client has called Done and thus are no longer interested in expired notifications
 	for len(r.kspChan) > 0 {
@@ -43,6 +38,12 @@ func (r *RecoverableRedisStreamClient) cleanup() error {
 
 	// cancel LBS context
 	r.lbsCtxCancelFunc()
+
+	// close pub sub
+	if err := r.pubSub.Close(); err != nil {
+		r.logger.Error("error closing redis pub sub")
+		return types.ErrClosingRedisPubsub
+	}
 
 	return nil
 }
@@ -100,6 +101,6 @@ func getGoogleCloudLogger() *slog.Logger {
 			}
 			return a
 		},
-		Level: slog.LevelDebug,
+		Level: slog.LevelWarn,
 	}))
 }
