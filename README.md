@@ -33,6 +33,7 @@ for notification := range outputChan {
         go process(notification.Payload.DataStreamName)
     case notifs.StreamExpired:
         client.Claim(ctx, notification.Payload)
+```
 # Architecture
 
 ## Threading Model
@@ -41,19 +42,19 @@ The library spawns multiple goroutines to handle concurrent operations:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         Client Instance                          │
+│                         Client Instance                         │
 ├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
+│                                                                 │
 │  ┌─────────────────┐                                            │
 │  │ LBS Reader      │  1 goroutine - reads from Load Balancer    │
 │  │ (blocking read) │  Stream, assigns streams to this consumer  │
 │  └─────────────────┘                                            │
-│                                                                  │
+│                                                                 │
 │  ┌─────────────────┐                                            │
 │  │ Keyspace        │  1 goroutine - listens for Redis key       │
 │  │ Listener        │  expiration events (pub/sub)               │
 │  └─────────────────┘                                            │
-│                                                                  │
+│                                                                 │
 │  ┌─────────────────┐                                            │
 │  │ Key Extender    │  N goroutines - one per active stream      │
 │  │ (stream-1)      │  extends distributed lock every hbInterval │
@@ -64,12 +65,12 @@ The library spawns multiple goroutines to handle concurrent operations:
 │  │ Key Extender    │  - Context cancelled                       │
 │  │ (stream-N)      │                                            │
 │  └─────────────────┘                                            │
-│                                                                  │
+│                                                                 │
 │  ┌─────────────────┐                                            │
 │  │ Notification    │  1 goroutine - serializes all              │
 │  │ Broker          │  notifications to output channel           │
 │  └─────────────────┘                                            │
-│                                                                  │
+│                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 
 Total goroutines per client: 3 + N (where N = active streams)

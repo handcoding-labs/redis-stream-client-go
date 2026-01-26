@@ -188,29 +188,7 @@ go test -bench=. ./...
 
 ### Pull Request Template
 
-When creating a PR, include:
-
-```markdown
-## Description
-Brief description of changes
-
-## Type of Change
-- [ ] Bug fix
-- [ ] New feature
-- [ ] Breaking change
-- [ ] Documentation update
-
-## Testing
-- [ ] Unit tests added/updated
-- [ ] Integration tests pass
-- [ ] Manual testing performed
-
-## Checklist
-- [ ] Code follows style guidelines
-- [ ] Self-review completed
-- [ ] Documentation updated
-- [ ] Tests added and passing
-```
+When creating a PR, make sure to follow the [pull request template](.github/PULL_REQUEST_TEMPLATE.md) presented on GitHub to write the description.
 
 ## 🐛 Bug Reports
 
