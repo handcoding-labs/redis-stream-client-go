@@ -76,7 +76,11 @@ func runConsumer() {
 	client, err := impl.NewRedisStreamClient(
 		redisClient,
 		"load-balance-demo",
-		impl.WithMaxRetries(-1),
+		impl.WithRetryConfig(impl.RetryConfig{
+			MaxRetries:        -1,
+			InitialRetryDelay: 100 * time.Millisecond,
+			MaxRetryDelay:     30 * time.Second,
+		}),
 		impl.WithForceConfigOverride(),
 	)
 	if err != nil {
