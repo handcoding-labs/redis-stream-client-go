@@ -13,7 +13,7 @@ type RecoverableRedisOption func(*RecoverableRedisStreamClient) error
 // RetryConfig holds all retry-related configuration
 type RetryConfig struct {
 	// MaxRetries is the maximum number of retry attempts
-	// -1 => unlimited retries (recommended for production)
+	// -1 => unlimited retries
 	// 0 => no retries, fail immediately
 	// >0 => specific number of retry attempts
 	MaxRetries int
