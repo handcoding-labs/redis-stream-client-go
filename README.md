@@ -495,6 +495,7 @@ func addTestMessage(ctx context.Context, redisClient redis.UniversalClient) {
 | [Usage Guide](./docs/USAGE.md) | API reference, configuration, notification types |
 | [Operations](./docs/OPERATIONS.md) | Memory, limits, backpressure, troubleshooting |
 | [Example](./docs/EXAMPLE.md) | Complete working example |
+| [Codebase Overview](./docs/CODEBASE_OVERVIEW.md) | Codebase overview |
 
 ## Installation
 
@@ -511,12 +512,3 @@ go get github.com/handcoding-labs/redis-stream-client-go
 ## License
 
 LGPL-2.1
-
-**Solutions**:
-- Implement timeouts in your processing logic
-- Use context cancellation for graceful shutdowns
-- Monitor processing times and adjust `WithLBSIdleTime` if needed
-
-### Output channel closed unexpectedly
-**Cause**: The internal `NotificationBroker` detected a shutdown condition.
-**Solution**: Check for `StreamTerminated` notifications which contain the reason for closure in `AdditionalInfo["info"]`. Common reasons include context cancellation or Redis connection errors.
