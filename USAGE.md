@@ -60,9 +60,9 @@ client, err := impl.NewRedisStreamClient(
 - `LBSIdleTime` must be > 2× heartbeat interval (minimum 4s)
 - Retry logic uses exponential backoff: 100ms → 200ms → 400ms → 800ms → ... (capped at `MaxRetryDelay`)
 - Resets error counter after successful reads
-  - `MaxRetries = -1` => unlimited retries (recommended for production)  
-               `= 0` => fail immediately (not recommended)  
-               `> 0` = specific number of retry attempts
+- `MaxRetries = -1` => unlimited retries (recommended for production)  
+             `= 0` => fail immediately (not recommended)  
+             `> 0` = specific number of retry attempts
 
 ## Initialization
 
