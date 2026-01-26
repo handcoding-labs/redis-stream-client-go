@@ -42,9 +42,11 @@ client, err := impl.NewRedisStreamClient(
     "my-service",
     impl.WithLBSIdleTime(30*time.Second),        // Default: 40s
     impl.WithLBSRecoveryCount(500),              // Default: 1000
-    impl.WithMaxRetries(10),                     // Default: 5
-    impl.WithInitialRetryDelay(200*time.Millisecond), // Default: 100ms
-    impl.WithMaxRetryDelay(1*time.Minute),       // Default: 30s
+    impl.WithRetryConfig(impl.RetryConfig{
+        MaxRetries:        -1,
+        InitialRetryDelay: 100*time.Millisecond,
+        MaxRetryDelay:     30*time.Second,
+    }),
 )
 ```
 
@@ -52,15 +54,15 @@ client, err := impl.NewRedisStreamClient(
 |--------|-------------|---------|
 | `WithLBSIdleTime(d)` | Time before message considered idle | 40s |
 | `WithLBSRecoveryCount(n)` | Messages to fetch during recovery | 1000 |
-| `WithMaxRetries(n)` | Max retries for LBS stream errors (0=no retry, -1=unlimited) | 5 |
-| `WithInitialRetryDelay(d)` | Initial delay before retrying after error | 100ms |
-| `WithMaxRetryDelay(d)` | Maximum delay between retries (exponential backoff cap) | 30s |
+| `WithRetryConfig(config)` | Configure retry behavior (see below) | 5 retries, 100ms-30s backoff |
 
 **Notes:**
 - `LBSIdleTime` must be > 2× heartbeat interval (minimum 4s)
-- Retry logic uses exponential backoff starting from `InitialRetryDelay` up to `MaxRetryDelay`
-- Set `MaxRetries` to `-1` for unlimited retries (recommended for production)
-- Set `MaxRetries` to `0` to disable retries (not recommended)
+- Retry logic uses exponential backoff: 100ms → 200ms → 400ms → 800ms → ... (capped at `MaxRetryDelay`)
+- Resets error counter after successful reads
+- `MaxRetries` = `-1` => unlimited retries (recommended for production)
+- `0` => fail immediately (not recommended)
+- `>0` = specific number of retry attempts
 
 ## Initialization
 
