@@ -67,6 +67,12 @@ type RecoverableRedisStreamClient struct {
 	forceOverrideConfig bool
 	// NotificationBroker handles all messaging to clients
 	notificationBroker *notifs.NotificationBroker
+	// maxRetries is the maximum number of retries for LBS stream read errors
+	maxRetries int
+	// initialRetryDelay is the initial delay before retrying after an error
+	initialRetryDelay time.Duration
+	// maxRetryDelay is the maximum delay between retries
+	maxRetryDelay time.Duration
 }
 
 // NewRedisStreamClient creates a new RedisStreamClient
@@ -95,19 +101,22 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string,
 	rs := redsync.New(pool)
 
 	r := &RecoverableRedisStreamClient{
-		redisClient:      redisClient,
-		consumerID:       consumerID,
-		kspChan:          make(chan *redis.Message, 500),
-		hbInterval:       configs.DefaultHBInterval,
-		streamLocks:      make(map[string]*StreamLocksInfo),
-		serviceName:      serviceName,
-		outputChan:       make(chan notifs.RecoverableRedisNotification, configs.DefaultOutputChanSize),
-		rs:               rs,
-		lbsIdleTime:      configs.DefaultLBSIdleTime,
-		lbsRecoveryCount: configs.DefaultLBSRecoveryCount,
-		kspChanSize:      configs.DefaultKspChanSize,
-		kspChanTimeout:   configs.DefaultKspChanTimeout,
-		logger:           getGoogleCloudLogger(),
+		redisClient:       redisClient,
+		consumerID:        consumerID,
+		kspChan:           make(chan *redis.Message, 500),
+		hbInterval:        configs.DefaultHBInterval,
+		streamLocks:       make(map[string]*StreamLocksInfo),
+		serviceName:       serviceName,
+		outputChan:        make(chan notifs.RecoverableRedisNotification, configs.DefaultOutputChanSize),
+		rs:                rs,
+		lbsIdleTime:       configs.DefaultLBSIdleTime,
+		lbsRecoveryCount:  configs.DefaultLBSRecoveryCount,
+		kspChanSize:       configs.DefaultKspChanSize,
+		kspChanTimeout:    configs.DefaultKspChanTimeout,
+		logger:            getGoogleCloudLogger(),
+		maxRetries:        configs.DefaultMaxRetries,
+		initialRetryDelay: configs.DefaultInitialRetryDelay,
+		maxRetryDelay:     configs.DefaultMaxRetryDelay,
 	}
 
 	for _, opt := range opts {

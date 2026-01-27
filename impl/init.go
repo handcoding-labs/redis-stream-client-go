@@ -103,6 +103,9 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
 }
 
 func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
+	consecutiveErrors := 0
+	currentRetryDelay := r.initialRetryDelay
+
 	for {
 		// check if context is done
 		if r.isContextDone(ctx) {
@@ -123,14 +126,47 @@ func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
 				r.notificationBroker.Send(ctx, notifs.MakeStreamTerminatedNotif(context.Canceled.Error()))
 				return
 			}
-			r.logger.Error("error while reading from LBS", "error", res.Err())
 
-			r.notificationBroker.Send(ctx, notifs.MakeStreamTerminatedNotif(res.Err().Error()))
-			return
+			consecutiveErrors++
+			r.logger.Error("error while reading from LBS",
+				"error", res.Err(),
+				"consecutive_errors", consecutiveErrors,
+				"retry_delay", currentRetryDelay)
+
+			if r.maxRetries >= 0 && consecutiveErrors > r.maxRetries {
+				r.logger.Error("max retries exceeded, terminating stream",
+					"max_retries", r.maxRetries,
+					"consecutive_errors", consecutiveErrors)
+				r.notificationBroker.Send(ctx, notifs.MakeStreamTerminatedNotif(res.Err().Error()))
+				return
+			}
+
+			// sleep with exponential backoff before retrying
+			select {
+			case <-ctx.Done():
+				r.notificationBroker.Send(ctx, notifs.MakeStreamTerminatedNotif(context.Canceled.Error()))
+				return
+			case <-time.After(currentRetryDelay):
+				// calculate next retry delay with exponential backoff
+				currentRetryDelay = currentRetryDelay * 2
+				if currentRetryDelay > r.maxRetryDelay {
+					currentRetryDelay = r.maxRetryDelay
+				}
+			}
+
+			continue
+		}
+
+		// successful read - reset error tracking
+		if consecutiveErrors > 0 {
+			r.logger.Info("LBS stream read recovered after errors",
+				"consecutive_errors", consecutiveErrors)
+			consecutiveErrors = 0
+			currentRetryDelay = r.initialRetryDelay
 		}
 
 		if err := r.processLBSMessages(ctx, res.Val(), r.rs); err != nil {
-			r.logger.Error("fatal error while reading lbs", "error", err)
+			r.logger.Error("fatal error while processing lbs messages", "error", err)
 			r.notificationBroker.Send(ctx, notifs.MakeStreamTerminatedNotif(err.Error()))
 			return
 		}
