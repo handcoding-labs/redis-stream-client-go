@@ -55,8 +55,9 @@ func runConsumer() {
 	}
 
 	redisClient := redis.NewUniversalClient(&redis.UniversalOptions{
-		Addrs: []string{redisAddr},
-		DB:    0,
+		Addrs:     []string{redisAddr},
+		DB:        0,
+		TLSConfig: nil, // for non-production use only - use a proper TLS config for production
 	})
 	defer redisClient.Close()
 
@@ -166,8 +167,9 @@ func runProducer() {
 	}
 
 	redisClient := redis.NewUniversalClient(&redis.UniversalOptions{
-		Addrs: []string{redisAddr},
-		DB:    0,
+		Addrs:     []string{redisAddr},
+		DB:        0,
+		TLSConfig: nil, // for non-production use only - use a proper TLS config for production
 	})
 	defer redisClient.Close()
 
