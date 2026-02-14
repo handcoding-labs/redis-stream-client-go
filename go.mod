@@ -1,6 +1,6 @@
 module github.com/handcoding-labs/redis-stream-client-go
 
-go 1.24.11
+go 1.26.0
 
 require (
 	github.com/redis/go-redis/v9 v9.6.3
