@@ -35,7 +35,7 @@ func newRedisClient(redisContainer *redis.RedisContainer) redisgo.UniversalClien
 }
 
 func setupSuite(t *testing.T) *redis.RedisContainer {
-	redisContainer, err := redis.Run(context.Background(), "redis:7.2.3")
+	redisContainer, err := redis.Run(context.Background(), "redis:8.2")
 	if err != nil {
 		t.Fatalf("failed to start redis container: %v", err)
 	}
@@ -498,6 +498,137 @@ func TestKspNotifsBulk(t *testing.T) {
 	}
 
 	require.Equal(t, totalExpected, totalActual)
+}
+
+func TestXAckDelBehavior(t *testing.T) {
+	ctx := context.TODO()
+	redisContainer := setupSuite(t)
+
+	redisClient := newRedisClient(redisContainer)
+	res := redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
+	require.NoError(t, res.Err())
+
+	consumer := createConsumer("111", redisContainer)
+	opChan, err := consumer.Init(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, opChan)
+
+	addNStreamsToLBS(t, redisContainer, 1)
+
+	// Wait for the consumer to receive the stream
+	var receivedStream string
+	select {
+	case msg := <-opChan:
+		require.Equal(t, notifs.StreamAdded, msg.Type)
+		receivedStream = msg.Payload.DataStreamName
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for stream notification")
+	}
+
+	// Get stream info before DoneStream
+	streamInfoBefore := redisClient.XInfoStreamFull(ctx, "consumer-input", 100)
+	require.Len(t, streamInfoBefore.Val().Entries, 1)
+
+	// Get pending entries before DoneStream
+	pendingBefore := redisClient.XPending(ctx, "consumer-input", "consumer-group")
+	require.Equal(t, int64(1), pendingBefore.Val().Count)
+
+	// Call DoneStream which will use XAckDel
+	err = consumer.DoneStream(ctx, receivedStream)
+	require.NoError(t, err)
+
+	// Verify the message is deleted from the stream
+	streamInfoAfter := redisClient.XInfoStreamFull(ctx, "consumer-input", 100)
+	require.Len(t, streamInfoAfter.Val().Entries, 0, "Stream entry should be deleted")
+
+	// Verify pending count is 0 (message was acknowledged)
+	pendingAfter := redisClient.XPending(ctx, "consumer-input", "consumer-group")
+	require.Equal(t, int64(0), pendingAfter.Val().Count, "No pending messages should remain")
+
+	// Verify the stream still exists (not deleted)
+	streamLen := redisClient.XLen(ctx, "consumer-input")
+	require.NoError(t, streamLen.Err())
+	require.Equal(t, int64(0), streamLen.Val(), "Stream should be empty but still exist")
+
+	// Cleanup
+	err = consumer.Done(ctx)
+	require.NoError(t, err)
+	_, ok := <-opChan
+	require.False(t, ok)
+}
+
+func TestXAckDelMultipleStreams(t *testing.T) {
+	ctx := context.TODO()
+	redisContainer := setupSuite(t)
+
+	redisClient := newRedisClient(redisContainer)
+	res := redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
+	require.NoError(t, res.Err())
+
+	consumer := createConsumer("111", redisContainer)
+	opChan, err := consumer.Init(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, opChan)
+
+	// Add 3 streams
+	addNStreamsToLBS(t, redisContainer, 3)
+
+	// Wait for all 3 streams to be received
+	receivedStreams := make([]string, 0, 3)
+	for i := range 3 {
+		select {
+		case msg := <-opChan:
+			require.Equal(t, notifs.StreamAdded, msg.Type)
+			receivedStreams = append(receivedStreams, msg.Payload.DataStreamName)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timeout waiting for stream %d notification", i)
+		}
+	}
+
+	// Verify we have 3 entries in the stream
+	streamInfoBefore := redisClient.XInfoStreamFull(ctx, "consumer-input", 100)
+	require.Len(t, streamInfoBefore.Val().Entries, 3)
+
+	// Verify we have 3 pending messages
+	pendingBefore := redisClient.XPending(ctx, "consumer-input", "consumer-group")
+	require.Equal(t, int64(3), pendingBefore.Val().Count)
+
+	// Mark first stream as done
+	err = consumer.DoneStream(ctx, receivedStreams[0])
+	require.NoError(t, err)
+
+	// Verify we now have 2 entries (first stream was deleted)
+	streamInfoAfter1 := redisClient.XInfoStreamFull(ctx, "consumer-input", 100)
+	require.Len(t, streamInfoAfter1.Val().Entries, 2, "One entry should be deleted")
+
+	// Verify we have 2 pending messages
+	pendingAfter1 := redisClient.XPending(ctx, "consumer-input", "consumer-group")
+	require.NoError(t, pendingAfter1.Err())
+	require.Equal(t, int64(2), pendingAfter1.Val().Count)
+
+	// Mark second stream as done
+	err = consumer.DoneStream(ctx, receivedStreams[1])
+	require.NoError(t, err)
+
+	// Verify we now have 1 entry
+	streamInfoAfter2 := redisClient.XInfoStreamFull(ctx, "consumer-input", 100)
+	require.Len(t, streamInfoAfter2.Val().Entries, 1, "Two entries should be deleted")
+
+	// Verify we have 1 pending message
+	pendingAfter2 := redisClient.XPending(ctx, "consumer-input", "consumer-group")
+	require.Equal(t, int64(1), pendingAfter2.Val().Count)
+
+	// Cleanup - Done should handle the remaining stream
+	err = consumer.Done(ctx)
+	require.NoError(t, err)
+	_, ok := <-opChan
+	require.False(t, ok)
+
+	// Verify all entries are now deleted
+	streamInfoFinal := redisClient.XInfoStreamFull(ctx, "consumer-input", 100)
+	require.NoError(t, streamInfoFinal.Err())
+	require.NotNil(t, streamInfoFinal.Val())
+	require.Len(t, streamInfoFinal.Val().Entries, 0, "All entries should be deleted")
 }
 
 func TestMainFlow(t *testing.T) {
