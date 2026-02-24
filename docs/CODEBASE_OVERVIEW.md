@@ -97,37 +97,21 @@ When consumer processing is slower than message arrival:
 
 **Example:** 100 active streams ≈ 500 KB total memory
 
-## Usage Basics
+## Error Handling
 
-1. Create the client with your `redis.UniversalClient` and service name.
-2. Call `Init(ctx)` to start listening for new streams and keyspace events. The returned channel provides unified notifications.
-3. Add messages to the LBS using `LBSInputMessage` structure with `DataStreamName` and optional `Info` metadata.
-4. Process notifications from the output channel, handling `StreamAdded`, `StreamExpired`, and `StreamDisowned` events.
-5. Use `Claim(ctx, payload)` when receiving a stream expiration notification to take over work from stalled consumers.
-6. Call `Done()` on shutdown to release locks and clean up.
+The library now uses a combination of sentinel errors and wrapped errors for better granularity and consistency. This approach ensures:
 
-## Message Structure
+- **Sentinel Errors**: Predefined constants for common error types, allowing easy comparison and handling.
+- **Wrapped Errors**: Contextual information added to errors using `fmt.Errorf` with the `%w` verb, enabling error unwrapping and detailed debugging.
 
-The library uses a standardized message format for LBS communication:
-
-- **`LBSInputMessage`** – Structure for adding messages to LBS with `DataStreamName` and `Info` fields
-- **`LBSInfo`** – Internal structure containing `DataStreamName` and `IDInLBS` for stream identification
-- **`RecoverableRedisNotification`** – Notification structure with `Type`, `Payload` (LBSInfo), and `AdditionalInfo` (from original Info field)
-
-## Internal Components
-
-### NotificationBroker Methods
-
-- **`Send(ctx, notification)`** – Thread-safe send to output channel; returns error if broker is closed or context cancelled
-- **`Close()`** – Initiates graceful shutdown, stops accepting new sends
-- **`Wait()`** – Blocks until all queued notifications are drained
-
-### Shutdown Sequence
+### Example
 
 ```go
-broker.Close()          // 1. Stop accepting new sends
-broker.Wait()           // 2. Block until notifications drain
-close(outputChannel)    // 3. Safe to close - no more writers
+if errors.Is(err, rediserr.ErrStreamNotFound) {
+    log.Warn("Stream not found", "stream", streamName)
+} else {
+    log.Error("Unexpected error", "error", err)
+}
 ```
 
 ## Next Steps for Learning

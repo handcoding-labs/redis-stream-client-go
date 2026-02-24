@@ -122,3 +122,26 @@ The library uses an internal `NotificationBroker` to safely manage notifications
 - Lower latency on lock expiration
 - No wasted Redis commands
 - Native Redis pub/sub reliability
+
+## Error Handling Design
+
+The library employs a robust error handling strategy using sentinel and wrapped errors:
+
+- **Sentinel Errors**: These are predefined constants for common error scenarios, enabling straightforward error checks.
+- **Wrapped Errors**: Contextual information is added to errors, aiding in debugging and providing detailed insights.
+
+### Benefits
+
+- **Consistency**: All errors follow a predictable structure.
+- **Debugging**: Developers can unwrap errors to trace the root cause.
+- **Granularity**: Specific error types can be handled differently based on the context.
+
+### Example
+
+```go
+if errors.Is(err, rediserr.ErrStreamNotFound) {
+    log.Warn("Stream not found", "stream", streamName)
+} else {
+    log.Error("Unexpected error", "error", err)
+}
+```

@@ -20,6 +20,7 @@ import (
     "github.com/handcoding-labs/redis-stream-client-go/impl"
     "github.com/handcoding-labs/redis-stream-client-go/notifs"
     "github.com/handcoding-labs/redis-stream-client-go/types"
+    "github.com/go-redis/redis/v9/rediserr"
 )
 
 func main() {
@@ -110,9 +111,11 @@ func processStream(
 
     // Mark stream as done - releases lock and acknowledges LBS message
     if err := client.DoneStream(ctx, streamName); err != nil {
-        slog.Error("Failed to mark stream done", 
-            "error", err, 
-            "stream", streamName)
+        if errors.Is(err, rediserr.ErrStreamNotFound) {
+            slog.Warn("Stream not found", "stream", streamName)
+        } else {
+            slog.Error("Failed to mark stream done", "error", err, "stream", streamName)
+        }
     } else {
         slog.Info("Stream processing completed", "stream", streamName)
     }
