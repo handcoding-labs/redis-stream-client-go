@@ -1,11 +1,12 @@
 package impl
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
 	"github.com/handcoding-labs/redis-stream-client-go/notifs"
-	"github.com/handcoding-labs/redis-stream-client-go/types"
+	"github.com/handcoding-labs/redis-stream-client-go/types/errs"
 )
 
 type RecoverableRedisOption func(*RecoverableRedisStreamClient) error
@@ -56,7 +57,7 @@ func WithLBSIdleTime(idleTime time.Duration) RecoverableRedisOption {
 	return func(r *RecoverableRedisStreamClient) error {
 		// idleTime must be greater than 2 * heartbeat interval at least
 		if idleTime == 0 || idleTime < (2*r.hbInterval) {
-			return types.ErrInvalidIdleTime
+			return errs.ErrInvalidIdleTime
 		}
 
 		r.lbsIdleTime = idleTime
@@ -68,7 +69,7 @@ func WithLBSIdleTime(idleTime time.Duration) RecoverableRedisOption {
 func WithLBSRecoveryCount(count int) RecoverableRedisOption {
 	return func(r *RecoverableRedisStreamClient) error {
 		if count <= 0 {
-			return types.ErrInvalidRecoveryCount
+			return errs.ErrInvalidRecoveryCount
 		}
 
 		r.lbsRecoveryCount = count
@@ -81,7 +82,7 @@ func WithLBSRecoveryCount(count int) RecoverableRedisOption {
 func WithKspChanSize(size int) RecoverableRedisOption {
 	return func(r *RecoverableRedisStreamClient) error {
 		if size <= 0 {
-			return types.ErrInvalidKspChanSize
+			return errs.ErrInvalidKspChanSize
 		}
 
 		r.kspChanSize = size
@@ -94,7 +95,7 @@ func WithKspChanSize(size int) RecoverableRedisOption {
 func WithKspChanTimeout(timeout time.Duration) RecoverableRedisOption {
 	return func(r *RecoverableRedisStreamClient) error {
 		if timeout < time.Minute {
-			return types.ErrInvalidKspChanTimeout
+			return errs.ErrInvalidKspChanTimeout
 		}
 
 		r.kspChanTimeout = timeout
@@ -116,7 +117,7 @@ func WithForceConfigOverride() RecoverableRedisOption {
 func WithOutputChanSize(size int) RecoverableRedisOption {
 	return func(r *RecoverableRedisStreamClient) error {
 		if size <= 0 {
-			return types.ErrInvalidOutputChanSize
+			return errs.ErrInvalidOutputChanSize
 		}
 
 		r.outputChan = make(chan notifs.RecoverableRedisNotification, size)

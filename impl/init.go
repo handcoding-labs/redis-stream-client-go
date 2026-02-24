@@ -9,7 +9,7 @@ import (
 
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
 	"github.com/handcoding-labs/redis-stream-client-go/notifs"
-	"github.com/handcoding-labs/redis-stream-client-go/types"
+	"github.com/handcoding-labs/redis-stream-client-go/types/errs"
 
 	"github.com/go-redsync/redsync/v4"
 	"github.com/redis/go-redis/v9"
@@ -21,14 +21,14 @@ func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx 
 	existingConfig := r.redisClient.ConfigGet(ctx, configs.NotifyKeyspaceEventsCmd)
 	configVals, err := existingConfig.Result()
 	if err != nil {
-		return types.ErrEnablingKeySpaceNotification
+		return errs.NewRedisError(errs.OpEnableKeyspaceNotification, err)
 	}
 
 	for _, v := range configVals {
 		if len(v) > 0 {
 			// some config for key space notifications already exists, so exit
 			if !r.forceOverrideConfig {
-				return types.ErrExistingConfigWithoutOverride
+				return errs.ErrExistingConfigWithoutOverride
 			} else {
 				slog.Warn("overriding existing keyspace notifications config since force override is set")
 			}
@@ -72,9 +72,9 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) er
 			Consumer: r.consumerID,
 		})
 
-		if xautoClaimRes.Err() != nil {
+		if err := xautoClaimRes.Err(); err != nil {
 			r.logger.Error("error while getting unacked messages", "error", xautoClaimRes.Err())
-			return types.ErrGettingUnackedMessages
+			return errs.NewRedisError(errs.OpGetUnackedMessages, err)
 		}
 
 		msgs, start := xautoClaimRes.Val()
@@ -102,7 +102,7 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) er
 	// available to client yet.
 	if err := r.processLBSMessages(ctx, streams, r.rs); err != nil {
 		r.logger.Error("fatal error while processing unacked messages", "error", err)
-		return types.ErrProcessingLBSMessages
+		return errs.NewRedisError(errs.OpProcessLBSMessages, err)
 	}
 
 	return nil
@@ -189,22 +189,22 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(
 			// has to be an LBS message
 			v, ok := message.Values[configs.LBSInput]
 			if !ok {
-				return types.ErrInvalidKeyForLBSMessage
+				return errs.ErrInvalidKeyForLBSMessage
 			}
 
 			// unmarshal the message
 			var lbsMessage notifs.LBSInputMessage
 			val, ok := v.(string)
 			if !ok {
-				return types.ErrInvalidLBSMessage
+				return errs.ErrInvalidLBSMessage
 			}
 
 			if err := json.Unmarshal([]byte(val), &lbsMessage); err != nil {
-				return types.ErrUnmarshallingLBSMessage
+				return errs.NewRedisError(errs.OpUnmarshalLBSMessage, err)
 			}
 
 			if lbsMessage.DataStreamName == "" {
-				return types.ErrNoDatastreamInLBSMessage
+				return errs.ErrNoDatastreamInLBSMessage
 			}
 
 			lbsInfo, err := notifs.CreateByParts(lbsMessage.DataStreamName, message.ID)
@@ -224,7 +224,7 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(
 
 			// lock only once
 			if err := mutex.Lock(); err != nil {
-				return types.ErrFailedToLockMutex
+				return errs.NewMutexError(errs.OpLockMutex, err)
 			}
 
 			r.streamLocksMutex.Lock()
@@ -274,8 +274,8 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 		// exit extending the key if:
 		// main context is canceled
 		if r.isContextDone(ctx) {
-			r.logger.Debug("context done, exiting", "consumer_id", r.consumerID)
-			return types.ErrContextDone
+			r.logger.Info("context done, exiting", "consumer_id", r.consumerID)
+			return nil
 		}
 
 		// or if DoneStream was called
@@ -286,7 +286,7 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 
 		if ok, err := mutex.Extend(); !ok || err != nil {
 			extensionFailed = true
-			return types.ErrExtensionFailed
+			return errs.NewMutexError(errs.OpExtendMutex, err)
 		}
 
 		time.Sleep(r.hbInterval / 2)

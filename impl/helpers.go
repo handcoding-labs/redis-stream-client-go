@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
-	"github.com/handcoding-labs/redis-stream-client-go/types"
+	"github.com/handcoding-labs/redis-stream-client-go/types/errs"
 )
 
 func (r *RecoverableRedisStreamClient) lbsGroupName() string {
@@ -42,7 +42,7 @@ func (r *RecoverableRedisStreamClient) cleanup() error {
 	// close pub sub
 	if err := r.pubSub.Close(); err != nil {
 		r.logger.Error("error closing redis pub sub")
-		return types.ErrClosingRedisPubsub
+		return errs.NewRedisError(errs.OpClosePubSub, err)
 	}
 
 	return nil
@@ -54,7 +54,7 @@ func (r *RecoverableRedisStreamClient) popStreamLocksInfo(dataStreamName string)
 	streamLocksInfo, ok := r.streamLocks[dataStreamName]
 	if !ok {
 		r.streamLocksMutex.Unlock()
-		return nil, types.ErrDataStreamNotFound
+		return nil, errs.ErrDataStreamNotFound
 	}
 
 	// delete volatile key from streamLocks

@@ -33,7 +33,6 @@ for notification := range outputChan {
         go process(notification.Payload.DataStreamName)
     case notifs.StreamExpired:
         client.Claim(ctx, notification.Payload)
-<<<<<<< HEAD
 ```
 # Architecture
 
@@ -484,8 +483,6 @@ func addTestMessage(ctx context.Context, redisClient redis.UniversalClient) {
             "priority": "high",
             "user_id":  "user-123",
         },
-=======
->>>>>>> eba0bd6 (updating documentation)
     }
 }
 ```
@@ -498,7 +495,6 @@ func addTestMessage(ctx context.Context, redisClient redis.UniversalClient) {
 | [Usage Guide](./docs/USAGE.md) | API reference, configuration, notification types |
 | [Operations](./docs/OPERATIONS.md) | Memory, limits, backpressure, troubleshooting |
 | [Example](./docs/EXAMPLE.md) | Complete working example |
-| [Codebase Overview](./docs/CODEBASE_OVERVIEW.md) | Codebase overview |
 
 ## Installation
 

@@ -17,6 +17,7 @@ import (
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
 	"github.com/handcoding-labs/redis-stream-client-go/notifs"
 	"github.com/handcoding-labs/redis-stream-client-go/types"
+	"github.com/handcoding-labs/redis-stream-client-go/types/errs"
 )
 
 // StreamLocksInfo holds information needed to operation with data streams and their management for synchronization
@@ -85,7 +86,7 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string,
 	podIP := os.Getenv(configs.PodIP)
 
 	if podName == "" && podIP == "" {
-		return nil, types.ErrPodConfigMissing
+		return nil, errs.ErrPodConfigMissing
 	}
 
 	var consumerID string
@@ -155,8 +156,8 @@ func (r *RecoverableRedisStreamClient) Init(ctx context.Context) (<-chan notifs.
 
 	// create group
 	res := r.redisClient.XGroupCreateMkStream(ctx, r.lbsName(), r.lbsGroupName(), configs.StartFromNow)
-	if res.Err() != nil && !strings.Contains(res.Err().Error(), "BUSYGROUP") {
-		return nil, types.ErrCreatingLBSStream
+	if err := res.Err(); err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {
+		return nil, errs.NewRedisError(errs.OpCreateLBSStream, err)
 	}
 
 	// recovery of unacked LBS messages
@@ -187,20 +188,20 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs
 		Messages: []string{lbsInfo.IDInLBS},
 	})
 
-	if res.Err() != nil {
+	if err := res.Err(); err != nil {
 		r.logger.Error("error claiming stream", "error", res.Err(), "consumer_id", r.consumerID)
-		return types.ErrClaimingStream
+		return errs.NewRedisError(errs.OpClaimStream, err)
 	}
 
 	claimed, err := res.Result()
 	if err != nil {
 		r.logger.Error("error getting claimed stream", "error", err, "consumer_id", r.consumerID,
 			"mutex_key", lbsInfo.FormMutexKey())
-		return types.ErrReadingClaimedStreamResult
+		return errs.NewRedisError(errs.OpReadClaimedStream, err)
 	}
 
 	if len(claimed) == 0 {
-		return types.ErrAlreadyClaimed
+		return errs.ErrAlreadyClaimed
 	}
 
 	mutex := r.rs.NewMutex(lbsInfo.FormMutexKey(),
@@ -214,7 +215,7 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs
 
 	// lock once
 	if err := mutex.Lock(); err != nil {
-		return types.ErrFailedToLockMutex
+		return errs.NewMutexError(errs.OpLockMutex, err)
 	}
 
 	// Retrieve the original message to get AdditionalInfo
@@ -260,14 +261,14 @@ func (r *RecoverableRedisStreamClient) DoneStream(ctx context.Context, dataStrea
 	_, err = streamLocksInfo.Mutex.Unlock()
 	if err != nil && !errors.Is(errors.Unwrap(err), redsync.ErrLockAlreadyExpired) {
 		r.logger.Error("error unlocking stream", "error", err.Error())
-		return types.ErrUnlockingStream
+		return errs.NewMutexError(errs.OpUnlockMutex, err)
 	}
 
 	// Acknowledge the message
 	res := r.redisClient.XAck(ctx, r.lbsName(), r.lbsGroupName(), streamLocksInfo.LBSInfo.IDInLBS)
 	if res.Err() != nil {
 		r.logger.Error("error acking stream", "error", res.Err())
-		return types.ErrAckingStream
+		return errs.NewRedisError(errs.OpAckStream, err)
 	}
 
 	return nil
