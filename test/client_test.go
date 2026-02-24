@@ -35,7 +35,7 @@ func newRedisClient(redisContainer *redis.RedisContainer) redisgo.UniversalClien
 }
 
 func setupSuite(t *testing.T) *redis.RedisContainer {
-	redisContainer, err := redis.Run(context.Background(), "redis:8.2")
+	redisContainer, err := redis.Run(context.Background(), "redis:7.2.3")
 	if err != nil {
 		t.Fatalf("failed to start redis container: %v", err)
 	}

@@ -269,11 +269,16 @@ func (r *RecoverableRedisStreamClient) DoneStream(ctx context.Context, dataStrea
 		return err
 	}
 
-	// Acknowledge and delete the message using XAckDel with KEEPREF
-	// KEEPREF preserves references in the consumer group's PEL while deleting the entry
-	res := r.redisClient.XAckDel(ctx, r.lbsName(), r.lbsGroupName(), "KEEPREF", streamLocksInfo.LBSInfo.IDInLBS)
-	if res.Err() != nil {
-		return res.Err()
+	// Acknowledge the message
+	_, err = r.redisClient.XAck(ctx, r.lbsName(), r.lbsGroupName(), streamLocksInfo.LBSInfo.IDInLBS).Result()
+	if err != nil {
+		return err
+	}
+
+	// Delete the message from the stream
+	_, err = r.redisClient.XDel(ctx, r.lbsName(), streamLocksInfo.LBSInfo.IDInLBS).Result()
+	if err != nil {
+		return err
 	}
 
 	return nil
