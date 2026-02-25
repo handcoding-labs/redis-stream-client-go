@@ -250,7 +250,7 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs
 // DoneStream marks end of processing for a particular stream
 //
 // This function is used to mark the end of processing for a particular stream
-// It unlocks the stream and acknowledges the message and cleans up internal state
+// It unlocks the stream, acknowledges the message and deletes the message from the stream.
 func (r *RecoverableRedisStreamClient) DoneStream(ctx context.Context, dataStreamName string) error {
 	streamLocksInfo, err := r.popStreamLocksInfo(dataStreamName)
 	if err != nil {
