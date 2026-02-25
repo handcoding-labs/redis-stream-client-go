@@ -301,7 +301,7 @@ func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
 		case kspNotif := <-r.kspChan:
 			if kspNotif != nil {
 				r.logger.Debug("ksp notif received", "consumer_id", r.consumerID, "payload", kspNotif.Payload)
-				lbsInfo, err := notifs.CreateByKspNotification(kspNotif.Payload)
+				lbsInfo, err := notifs.CreateByKspNotification(kspNotif.Channel)
 				if err != nil {
 					r.logger.Warn("error parsing ksp notification", "ksp_notification", kspNotif)
 					continue

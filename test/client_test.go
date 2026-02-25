@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -307,7 +308,7 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	var actualMutexKey string
 	for _, c := range grp.Consumers {
 		if c.Name == "redis-consumer-111" && len(c.Pending) > 0 {
-			actualMutexKey = fmt.Sprintf("session0<MUTEX_KEY_SEP>%s", c.Pending[0].ID)
+			actualMutexKey = fmt.Sprintf("__keyspace@0__:session0<MUTEX_KEY_SEP>%s", c.Pending[0].ID)
 			break
 		}
 	}
@@ -371,26 +372,63 @@ func TestKspNotifs(t *testing.T) {
 	redisContainer := setupSuite(t)
 
 	redisClient := newRedisClient(redisContainer)
+
+	// 1. Verify ConfigSet
 	res := redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
 	require.NoError(t, res.Err())
+	t.Logf("ConfigSet: cmd=%s value=%s", configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
 
+	// 2. Verify config took effect
+	cfg := redisClient.ConfigGet(ctx, "notify-keyspace-events")
+	require.NoError(t, cfg.Err())
+	t.Logf("notify-keyspace-events after set: %v", cfg.Val())
+
+	// 3. Log the pattern
+	t.Logf("Subscribing to pattern: [%s]", configs.ExpiredEventPattern)
 	pubsub := redisClient.PSubscribe(ctx, configs.ExpiredEventPattern)
+
+	// 4. Verify subscription
+	time.Sleep(time.Millisecond * 100)
+	subsMsg, err := pubsub.Receive(ctx)
+	t.Logf("Subscription receive result: %v, err: %v", subsMsg, err)
+
 	kspChan := pubsub.Channel(redisgo.WithChannelHealthCheckInterval(1*time.Second), redisgo.WithChannelSendTimeout(10*time.Minute))
 
-	// now add a key and check if it times out
-	redisClient.Set(ctx, "key1", "value1", time.Second)
+	time.Sleep(time.Millisecond * 100)
+
+	// 5. Verify key set
+	keyName := "datastream" + configs.MutexKeySep + "1"
+	t.Logf("Setting key: [%s]", keyName)
+	setRes := redisClient.Set(ctx, keyName, "value1", 2*time.Second)
+	require.NoError(t, setRes.Err())
+
+	// 6. Verify key exists with TTL
+	ttl := redisClient.TTL(ctx, keyName)
+	t.Logf("Key TTL: %v", ttl.Val())
+
+	// 7. Verify active pubsub channels on server
+	channels := redisClient.PubSubChannels(ctx, "*")
+	t.Logf("Active pubsub channels: %v", channels.Val())
 
 	success := false
 
 	for {
 		select {
 		case notif, ok := <-kspChan:
+			t.Logf("Received notification: ok=%v channel=%s payload=%s", ok, notif.Channel, notif.Payload)
 			require.True(t, ok)
 			require.NotNil(t, notif)
 			require.NotNil(t, notif.Payload)
-			require.Equal(t, notif.Payload, "key1")
+			// filter key name from channel: __keyspace@0__:<keyName>
+			keyNameInChannel, ok := strings.CutPrefix(notif.Channel, "__keyspace@0__:")
+			require.True(t, ok)
+			require.Equal(t, keyNameInChannel, keyName)
 			success = true
-		case <-time.After(time.Millisecond * 500):
+		case <-time.After(5 * time.Second):
+			t.Logf("Timeout waiting for notification, success=%v", success)
+			// Check if key still exists
+			exists := redisClient.Exists(ctx, keyName)
+			t.Logf("Key still exists: %v", exists.Val())
 		}
 
 		if success {
@@ -400,7 +438,6 @@ func TestKspNotifs(t *testing.T) {
 
 	require.True(t, success)
 	require.NoError(t, pubsub.Close())
-	// read from closed channel
 	_, ok := <-kspChan
 	require.False(t, ok)
 	require.NoError(t, redisClient.Close())
