@@ -511,12 +511,3 @@ go get github.com/handcoding-labs/redis-stream-client-go
 ## License
 
 LGPL-2.1
-
-**Solutions**:
-- Implement timeouts in your processing logic
-- Use context cancellation for graceful shutdowns
-- Monitor processing times and adjust `WithLBSIdleTime` if needed
-
-### Output channel closed unexpectedly
-**Cause**: The internal `NotificationBroker` detected a shutdown condition.
-**Solution**: Check for `StreamTerminated` notifications which contain the reason for closure in `AdditionalInfo["info"]`. Common reasons include context cancellation or Redis connection errors.

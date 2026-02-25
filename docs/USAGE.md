@@ -229,3 +229,19 @@ Or in `redis.conf`:
 ```
 notify-keyspace-events Ex
 ```
+
+## Error Handling
+
+The client uses sentinel and wrapped errors to provide detailed error information. Use `errors.Is` to check for specific sentinel errors and `errors.Unwrap` to retrieve the underlying error.
+
+### Example
+
+```go
+if errors.Is(err, rediserr.ErrStreamNotFound) {
+    log.Warn("Stream not found", "stream", streamName)
+} else if unwrappedErr := errors.Unwrap(err); unwrappedErr != nil {
+    log.Error("Underlying error", "error", unwrappedErr)
+} else {
+    log.Error("Unexpected error", "error", err)
+}
+```

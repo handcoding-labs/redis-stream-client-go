@@ -299,3 +299,23 @@ go func() {
     }
 }()
 ```
+
+## Error Handling in Operations
+
+### Sentinel Errors
+
+Sentinel errors are predefined constants that represent specific error conditions. They allow for quick checks and consistent handling across the codebase.
+
+### Wrapped Errors
+
+Wrapped errors provide additional context to errors, making debugging easier. Use `errors.Unwrap` to retrieve the original error.
+
+### Operational Example
+
+```go
+if errors.Is(err, rediserr.ErrStreamNotFound) {
+    log.Warn("Stream not found during operation", "stream", streamName)
+} else {
+    log.Error("Operation failed", "error", err)
+}
+```

@@ -4,7 +4,8 @@ package notifs
 type NotificationType int
 
 const (
-	StreamAdded NotificationType = iota
+	Unknown NotificationType = iota
+	StreamAdded
 	StreamDisowned
 	StreamExpired
 	StreamTerminated
@@ -17,6 +18,10 @@ type RecoverableRedisNotification struct {
 	Payload LBSInfo
 	// AdditionalInfo is an echo from any additional data seeded in LBSInputMessage
 	AdditionalInfo map[string]any
+}
+
+func (n RecoverableRedisNotification) IsZero() bool {
+	return n.Type == Unknown
 }
 
 // LBSMessage is the format in which the message should be written to LBS

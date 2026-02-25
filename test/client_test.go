@@ -238,6 +238,7 @@ func TestLBSRecoveryOfDiscontinuousStreamMessages(t *testing.T) {
 				delete(expectedToBeRecovered, msg.Payload.DataStreamName)
 			}
 		case <-time.After(10 * time.Second):
+			t.Fatalf("timed out waiting for recovery, still expecting: %v", expectedToBeRecovered)
 		}
 	}
 
@@ -472,6 +473,7 @@ func TestKspNotifsBulk(t *testing.T) {
 			}
 		}
 
+		slog.Debug("totalActual = ", "totalActual", totalActual)
 		if totalActual == 0 {
 			done = true
 		}
