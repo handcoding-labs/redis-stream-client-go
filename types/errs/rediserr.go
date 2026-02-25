@@ -12,6 +12,7 @@ const (
 	OpClaimStream                RedisOp = "claiming stream"
 	OpReadClaimedStream          RedisOp = "reading result from claimed stream"
 	OpAckStream                  RedisOp = "acknowledging stream"
+	OpDelStream                  RedisOp = "deleting stream"
 	OpClosePubSub                RedisOp = "closing redis pubsub"
 )
 
