@@ -314,11 +314,11 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	}
 	require.NotEmpty(t, actualMutexKey, "Could not find pending message for consumer1")
 
-	mutexKey1, err := notifs.CreateByKspNotification(actualMutexKey)
+	mutexKey1, err := notifs.CreateByKspNotification(actualMutexKey, configs.ExpiredPayload)
 	require.NoError(t, err)
 	err = consumer2.Claim(ctxWOCancel, mutexKey1)
 	require.NoError(t, err)
-	mutexKey2, err := notifs.CreateByKspNotification(actualMutexKey)
+	mutexKey2, err := notifs.CreateByKspNotification(actualMutexKey, configs.ExpiredPayload)
 	require.NoError(t, err)
 	err = consumer3.Claim(ctxWOCancel, mutexKey2)
 	require.Error(t, err)
@@ -420,7 +420,7 @@ func TestKspNotifs(t *testing.T) {
 			require.NotNil(t, notif)
 			require.NotNil(t, notif.Payload)
 			// filter key name from channel: __keyspace@0__:<keyName>
-			keyNameInChannel, ok := strings.CutPrefix(notif.Channel, "__keyspace@0__:")
+			keyNameInChannel, ok := strings.CutPrefix(notif.Channel, configs.KeySpacePrefix)
 			require.True(t, ok)
 			require.Equal(t, keyNameInChannel, keyName)
 			success = true

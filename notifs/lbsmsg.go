@@ -17,9 +17,14 @@ func (l *LBSInfo) FormMutexKey() string {
 	return strings.Join([]string{l.DataStreamName, l.IDInLBS}, configs.MutexKeySep)
 }
 
-func CreateByKspNotification(mutexKey string) (LBSInfo, error) {
+func CreateByKspNotification(mutexKey string, payload string) (LBSInfo, error) {
 	// mutexKey is expected to be in the format datastream_name<MUTEX_KEY_SEP>message_id_in_lbs
-	streamName, ok := strings.CutPrefix(mutexKey, "__keyspace@0__:")
+	if payload != configs.ExpiredPayload {
+		// we only care about expired events of mutex keys - log and ignore the rest
+		return LBSInfo{}, fmt.Errorf("ignoring non-expired event for key %s with payload %s", mutexKey, payload)
+	}
+
+	streamName, ok := strings.CutPrefix(mutexKey, configs.KeySpacePrefix)
 	if !ok {
 		// ill-formatted notification - log and ignore
 		return LBSInfo{}, fmt.Errorf("invalid ksp notification format: %s", mutexKey)

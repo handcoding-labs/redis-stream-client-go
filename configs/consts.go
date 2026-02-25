@@ -11,7 +11,9 @@ const (
 	MaximalRangeID                  = "+"
 	StartID                         = "0"
 	StartIDPair                     = "0-0"
-	ExpiredEventPattern             = "__keyspace@0__:*" + MutexKeySep + "*" // pattern for expired events of mutex keys
+	KeySpacePrefix                  = "__keyspace@0__:"
+	ExpiredPayload                  = "expired"
+	ExpiredEventPattern             = KeySpacePrefix + "*" + MutexKeySep + "*" // pattern for expired events of mutex keys
 	NotifyKeyspaceEventsCmd         = "notify-keyspace-events"
 	KeyspacePatternForExpiredEvents = "KEx"
 	RedisConsumerPrefix             = "redis-consumer-"
