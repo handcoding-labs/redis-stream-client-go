@@ -73,7 +73,7 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) er
 		})
 
 		if err := xautoClaimRes.Err(); err != nil {
-			r.logger.Error("error while getting unacked messages", "error", xautoClaimRes.Err())
+			r.logger.Error("error while getting unacked messages", "error", err)
 			return errs.NewRedisError(errs.OpGetUnackedMessages, err)
 		}
 
