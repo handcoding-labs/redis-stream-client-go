@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
 	"github.com/handcoding-labs/redis-stream-client-go/notifs"
+	"github.com/handcoding-labs/redis-stream-client-go/types/errs"
 
 	"github.com/go-redsync/redsync/v4"
 	"github.com/redis/go-redis/v9"
@@ -21,14 +21,14 @@ func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx 
 	existingConfig := r.redisClient.ConfigGet(ctx, configs.NotifyKeyspaceEventsCmd)
 	configVals, err := existingConfig.Result()
 	if err != nil {
-		return err
+		return errs.NewRedisError(errs.OpEnableKeyspaceNotification, err)
 	}
 
 	for _, v := range configVals {
 		if len(v) > 0 {
 			// some config for key space notifications already exists, so exit
 			if !r.forceOverrideConfig {
-				return fmt.Errorf("detected existing configuration for key space notifications and force override is disabled")
+				return errs.ErrExistingConfigWithoutOverride
 			} else {
 				slog.Warn("overriding existing keyspace notifications config since force override is set")
 			}
@@ -43,21 +43,20 @@ func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx 
 	return nil
 }
 
-func (r *RecoverableRedisStreamClient) subscribeToExpiredEvents(ctx context.Context) error {
+func (r *RecoverableRedisStreamClient) subscribeToExpiredEvents(ctx context.Context) {
 	r.pubSub = r.redisClient.PSubscribe(ctx, configs.ExpiredEventPattern)
 	r.kspChan = r.pubSub.Channel(
 		redis.WithChannelHealthCheckInterval(5*time.Second),
 		redis.WithChannelSendTimeout(r.kspChanTimeout),
 		redis.WithChannelSize(r.kspChanSize),
 	)
-	return nil
 }
 
 // This method doesn't return error and just logs because we execute this
 // when no consumer was around to recevie notifications and messages were pending.
 // So, this method is just recovering those messages and if there is an issue in
 // processing them, then erroring out will stop consumer from processing latest streams also.
-func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
+func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) error {
 	// nextStart is initialized to empty string to claiming can start
 	// when it gets populated as 0-0 as a result to auto claim,
 	// it means there is nothing more to claim or process
@@ -73,8 +72,9 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
 			Consumer: r.consumerID,
 		})
 
-		if xautoClaimRes.Err() != nil {
-			r.logger.Error("error while getting unacked messages", "error", xautoClaimRes.Err())
+		if err := xautoClaimRes.Err(); err != nil {
+			r.logger.Error("error while getting unacked messages", "error", err)
+			return errs.NewRedisError(errs.OpGetUnackedMessages, err)
 		}
 
 		msgs, start := xautoClaimRes.Val()
@@ -95,11 +95,17 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) {
 		},
 	}
 
-	// process the message
+	// process the unacked messages
+	// note that there is one more place where `processLBSMessages` can fail in readLBSStream
+	// and we send an notification on outputChan. Here we don't do that because this is
+	// boot up code and we're recovering messages and thus outputChan isn't technically
+	// available to client yet.
 	if err := r.processLBSMessages(ctx, streams, r.rs); err != nil {
 		r.logger.Error("fatal error while processing unacked messages", "error", err)
-		return
+		return errs.NewRedisError(errs.OpProcessLBSMessages, err)
 	}
+
+	return nil
 }
 
 func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
@@ -183,22 +189,22 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(
 			// has to be an LBS message
 			v, ok := message.Values[configs.LBSInput]
 			if !ok {
-				return fmt.Errorf("message on LBS stream must be keyed with %s", configs.LBSInput)
+				return errs.ErrInvalidKeyForLBSMessage
 			}
 
 			// unmarshal the message
 			var lbsMessage notifs.LBSInputMessage
 			val, ok := v.(string)
 			if !ok {
-				return fmt.Errorf("error while converting lbs message")
+				return errs.ErrInvalidLBSMessage
 			}
 
 			if err := json.Unmarshal([]byte(val), &lbsMessage); err != nil {
-				return fmt.Errorf("error while unmarshalling LBS message: %w", err)
+				return errs.NewRedisError(errs.OpUnmarshalLBSMessage, err)
 			}
 
 			if lbsMessage.DataStreamName == "" {
-				return fmt.Errorf("no data stream specified in LBS message")
+				return errs.ErrNoDatastreamInLBSMessage
 			}
 
 			lbsInfo, err := notifs.CreateByParts(lbsMessage.DataStreamName, message.ID)
@@ -218,7 +224,7 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(
 
 			// lock only once
 			if err := mutex.Lock(); err != nil {
-				return err
+				return errs.NewMutexError(errs.OpLockMutex, err)
 			}
 
 			r.streamLocksMutex.Lock()
@@ -255,13 +261,19 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 			// if client is still interested or is coming back from a delay (GC pause etc) then inform about disowning of stream
 			r.notificationBroker.Send(ctx, notifs.Make(notifs.StreamDisowned, lbsInfo, additionalInfo))
 		}
+
+		// cleanup internal state
+		_, err := r.popStreamLocksInfo(lbsInfo.DataStreamName)
+		if err != nil {
+			slog.Warn("error cleaning up internal state", "error", err)
+		}
 	}()
 
 	for {
 		// exit extending the key if:
 		// main context is canceled
 		if r.isContextDone(ctx) {
-			r.logger.Debug("context done, exiting", "consumer_id", r.consumerID)
+			r.logger.Info("context done, exiting", "consumer_id", r.consumerID)
 			return nil
 		}
 
@@ -273,7 +285,7 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 
 		if ok, err := mutex.Extend(); !ok || err != nil {
 			extensionFailed = true
-			return fmt.Errorf("could not extend mutex, err: %s", err)
+			return errs.NewMutexError(errs.OpExtendMutex, err)
 		}
 
 		time.Sleep(r.hbInterval / 2)
@@ -285,7 +297,6 @@ func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			r.logger.Debug("context done, exiting", "consumer_id", r.consumerID)
-			r.notificationBroker.Send(ctx, notifs.MakeStreamTerminatedNotif("context done"))
 			return
 		case kspNotif := <-r.kspChan:
 			if kspNotif != nil {

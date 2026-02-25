@@ -58,7 +58,7 @@ test: test-unit test-integration
 ## test-unit: Run unit tests only
 test-unit:
 	@echo "Running unit tests..."
-	$(GOTEST) -v -timeout 30s ./...
+	$(GOTEST) -v -count=1 -race -timeout 30s ./...
 
 ## test-integration: Run integration tests only
 test-integration:

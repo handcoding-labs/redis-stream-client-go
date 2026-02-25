@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -18,6 +17,7 @@ import (
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
 	"github.com/handcoding-labs/redis-stream-client-go/notifs"
 	"github.com/handcoding-labs/redis-stream-client-go/types"
+	"github.com/handcoding-labs/redis-stream-client-go/types/errs"
 )
 
 // StreamLocksInfo holds information needed to operation with data streams and their management for synchronization
@@ -86,7 +86,7 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string,
 	podIP := os.Getenv(configs.PodIP)
 
 	if podName == "" && podIP == "" {
-		return nil, fmt.Errorf("podName or podIP not found in env")
+		return nil, errs.ErrPodConfigMissing
 	}
 
 	var consumerID string
@@ -121,7 +121,7 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string,
 
 	for _, opt := range opts {
 		if err := opt(r); err != nil {
-			panic(fmt.Sprintf("invalid option: %v", err))
+			return nil, err
 		}
 	}
 
@@ -145,25 +145,25 @@ func (r *RecoverableRedisStreamClient) ID() string {
 func (r *RecoverableRedisStreamClient) Init(ctx context.Context) (<-chan notifs.RecoverableRedisNotification, error) {
 	keyspaceErr := r.enableKeyspaceNotifsForExpiredEvents(ctx)
 	if keyspaceErr != nil {
-		return nil, fmt.Errorf("error while enabling keyspace notifications for expired events: %w", keyspaceErr)
+		return nil, keyspaceErr
 	}
 
-	expiredErr := r.subscribeToExpiredEvents(ctx)
-	if expiredErr != nil {
-		return nil, fmt.Errorf("error while subscribing to expired events: %w", expiredErr)
-	}
+	// start listening to redis pub sub
+	r.subscribeToExpiredEvents(ctx)
 
 	newCtx, cancelFunc := context.WithCancel(ctx)
 	r.lbsCtxCancelFunc = cancelFunc
 
 	// create group
 	res := r.redisClient.XGroupCreateMkStream(ctx, r.lbsName(), r.lbsGroupName(), configs.StartFromNow)
-	if res.Err() != nil && !strings.Contains(res.Err().Error(), "BUSYGROUP") {
-		return nil, res.Err()
+	if err := res.Err(); err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {
+		return nil, errs.NewRedisError(errs.OpCreateLBSStream, err)
 	}
 
 	// recovery of unacked LBS messages
-	r.recoverUnackedLBS(newCtx)
+	if err := r.recoverUnackedLBS(newCtx); err != nil {
+		return nil, err
+	}
 
 	// start blocking read on LBS stream
 	go r.readLBSStream(newCtx)
@@ -188,20 +188,20 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs
 		Messages: []string{lbsInfo.IDInLBS},
 	})
 
-	if res.Err() != nil {
+	if err := res.Err(); err != nil {
 		r.logger.Error("error claiming stream", "error", res.Err(), "consumer_id", r.consumerID)
-		return res.Err()
+		return errs.NewRedisError(errs.OpClaimStream, err)
 	}
 
 	claimed, err := res.Result()
 	if err != nil {
 		r.logger.Error("error getting claimed stream", "error", err, "consumer_id", r.consumerID,
 			"mutex_key", lbsInfo.FormMutexKey())
-		return err
+		return errs.NewRedisError(errs.OpReadClaimedStream, err)
 	}
 
 	if len(claimed) == 0 {
-		return fmt.Errorf("already claimed")
+		return errs.ErrAlreadyClaimed
 	}
 
 	mutex := r.rs.NewMutex(lbsInfo.FormMutexKey(),
@@ -215,7 +215,7 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs
 
 	// lock once
 	if err := mutex.Lock(); err != nil {
-		return err
+		return errs.NewMutexError(errs.OpLockMutex, err)
 	}
 
 	// Retrieve the original message to get AdditionalInfo
@@ -252,33 +252,30 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs
 // This function is used to mark the end of processing for a particular stream
 // It unlocks the stream and acknowledges the message and cleans up internal state
 func (r *RecoverableRedisStreamClient) DoneStream(ctx context.Context, dataStreamName string) error {
-	r.streamLocksMutex.Lock()
-	streamLocksInfo, ok := r.streamLocks[dataStreamName]
-	if !ok {
-		r.streamLocksMutex.Unlock()
-		return fmt.Errorf("stream not found")
+	streamLocksInfo, err := r.popStreamLocksInfo(dataStreamName)
+	if err != nil {
+		return err
 	}
 
-	// delete volatile key from streamLocks
-	delete(r.streamLocks, dataStreamName)
-	r.streamLocksMutex.Unlock()
-
 	// unlock the stream
-	_, err := streamLocksInfo.Mutex.Unlock()
+	_, err = streamLocksInfo.Mutex.Unlock()
 	if err != nil && !errors.Is(errors.Unwrap(err), redsync.ErrLockAlreadyExpired) {
-		return err
+		r.logger.Error("error unlocking stream", "error", err.Error())
+		return errs.NewMutexError(errs.OpUnlockMutex, err)
 	}
 
 	// Acknowledge the message
-	_, err = r.redisClient.XAck(ctx, r.lbsName(), r.lbsGroupName(), streamLocksInfo.LBSInfo.IDInLBS).Result()
-	if err != nil {
-		return err
+	res := r.redisClient.XAck(ctx, r.lbsName(), r.lbsGroupName(), streamLocksInfo.LBSInfo.IDInLBS)
+	if res.Err() != nil {
+		r.logger.Error("error acking stream", "error", res.Err())
+		return errs.NewRedisError(errs.OpAckStream, err)
 	}
 
 	// Delete the message from the stream
-	_, err = r.redisClient.XDel(ctx, r.lbsName(), streamLocksInfo.LBSInfo.IDInLBS).Result()
-	if err != nil {
-		return err
+	res = r.redisClient.XDel(ctx, r.lbsName(), streamLocksInfo.LBSInfo.IDInLBS)
+	if res.Err() != nil {
+		r.logger.Error("error deleting stream", "error", res.Err())
+		return errs.NewRedisError(errs.OpDelStream, res.Err())
 	}
 
 	return nil
@@ -308,26 +305,6 @@ func (r *RecoverableRedisStreamClient) Done(ctx context.Context) error {
 	if err := r.cleanup(); err != nil {
 		return err
 	}
-
-	return nil
-}
-
-func (r *RecoverableRedisStreamClient) cleanup() error {
-	if err := r.pubSub.Close(); err != nil {
-		return err
-	}
-
-	// drain kspchan and ignore expired notifications
-	// since client has called Done and thus are no longer interested in expired notifications
-	for len(r.kspChan) > 0 {
-		<-r.kspChan
-	}
-
-	// close the output channel
-	r.notificationBroker.Close()
-
-	// cancel LBS context
-	r.lbsCtxCancelFunc()
 
 	return nil
 }
