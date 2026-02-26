@@ -385,7 +385,8 @@ func TestKspNotifs(t *testing.T) {
 
 	// 4. Verify subscription
 	time.Sleep(time.Millisecond * 100)
-	pubsub.Receive(ctx)
+	_, err := pubsub.Receive(ctx)
+	require.NoError(t, err)
 
 	kspChan := pubsub.Channel(redisgo.WithChannelHealthCheckInterval(1*time.Second), redisgo.WithChannelSendTimeout(10*time.Minute))
 
