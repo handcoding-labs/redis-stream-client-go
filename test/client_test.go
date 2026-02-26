@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -307,17 +308,17 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	var actualMutexKey string
 	for _, c := range grp.Consumers {
 		if c.Name == "redis-consumer-111" && len(c.Pending) > 0 {
-			actualMutexKey = fmt.Sprintf("session0<MUTEX_KEY_SEP>%s", c.Pending[0].ID)
+			actualMutexKey = fmt.Sprintf("__keyspace@0__:session0<MUTEX_KEY_SEP>%s", c.Pending[0].ID)
 			break
 		}
 	}
 	require.NotEmpty(t, actualMutexKey, "Could not find pending message for consumer1")
 
-	mutexKey1, err := notifs.CreateByKspNotification(actualMutexKey)
+	mutexKey1, err := notifs.CreateByKspNotification(actualMutexKey, configs.ExpiredPayload)
 	require.NoError(t, err)
 	err = consumer2.Claim(ctxWOCancel, mutexKey1)
 	require.NoError(t, err)
-	mutexKey2, err := notifs.CreateByKspNotification(actualMutexKey)
+	mutexKey2, err := notifs.CreateByKspNotification(actualMutexKey, configs.ExpiredPayload)
 	require.NoError(t, err)
 	err = consumer3.Claim(ctxWOCancel, mutexKey2)
 	require.Error(t, err)
@@ -371,14 +372,36 @@ func TestKspNotifs(t *testing.T) {
 	redisContainer := setupSuite(t)
 
 	redisClient := newRedisClient(redisContainer)
+
+	// 1. Verify ConfigSet
 	res := redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
 	require.NoError(t, res.Err())
 
-	pubsub := redisClient.PSubscribe(ctx, configs.ExpiredEventPattern)
+	// 2. Verify config took effect
+	cfg := redisClient.ConfigGet(ctx, "notify-keyspace-events")
+	require.NoError(t, cfg.Err())
+
+	pubsub := redisClient.PSubscribe(ctx, configs.MutexKeySpacePattern)
+
+	// 4. Verify subscription
+	time.Sleep(time.Millisecond * 100)
+	_, err := pubsub.Receive(ctx)
+	require.NoError(t, err)
+
 	kspChan := pubsub.Channel(redisgo.WithChannelHealthCheckInterval(1*time.Second), redisgo.WithChannelSendTimeout(10*time.Minute))
 
-	// now add a key and check if it times out
-	redisClient.Set(ctx, "key1", "value1", time.Second)
+	time.Sleep(time.Millisecond * 100)
+
+	// 5. Verify key set
+	keyName := "datastream" + configs.MutexKeySep + "1"
+	setRes := redisClient.Set(ctx, keyName, "value1", 2*time.Second)
+	require.NoError(t, setRes.Err())
+
+	// 6. Verify key exists with TTL
+	redisClient.TTL(ctx, keyName)
+
+	// 7. Verify active pubsub channels on server
+	redisClient.PubSubChannels(ctx, "*")
 
 	success := false
 
@@ -388,9 +411,14 @@ func TestKspNotifs(t *testing.T) {
 			require.True(t, ok)
 			require.NotNil(t, notif)
 			require.NotNil(t, notif.Payload)
-			require.Equal(t, notif.Payload, "key1")
+			// filter key name from channel: __keyspace@0__:<keyName>
+			keyNameInChannel, ok := strings.CutPrefix(notif.Channel, configs.KeySpacePrefix)
+			require.True(t, ok)
+			require.Equal(t, keyNameInChannel, keyName)
 			success = true
-		case <-time.After(time.Millisecond * 500):
+		case <-time.After(5 * time.Second):
+			// Check if key still exists
+			redisClient.Exists(ctx, keyName)
 		}
 
 		if success {
@@ -400,7 +428,6 @@ func TestKspNotifs(t *testing.T) {
 
 	require.True(t, success)
 	require.NoError(t, pubsub.Close())
-	// read from closed channel
 	_, ok := <-kspChan
 	require.False(t, ok)
 	require.NoError(t, redisClient.Close())

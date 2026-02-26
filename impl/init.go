@@ -44,7 +44,7 @@ func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx 
 }
 
 func (r *RecoverableRedisStreamClient) subscribeToExpiredEvents(ctx context.Context) {
-	r.pubSub = r.redisClient.PSubscribe(ctx, configs.ExpiredEventPattern)
+	r.pubSub = r.redisClient.PSubscribe(ctx, configs.MutexKeySpacePattern)
 	r.kspChan = r.pubSub.Channel(
 		redis.WithChannelHealthCheckInterval(5*time.Second),
 		redis.WithChannelSendTimeout(r.kspChanTimeout),
@@ -301,7 +301,7 @@ func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
 		case kspNotif := <-r.kspChan:
 			if kspNotif != nil {
 				r.logger.Debug("ksp notif received", "consumer_id", r.consumerID, "payload", kspNotif.Payload)
-				lbsInfo, err := notifs.CreateByKspNotification(kspNotif.Payload)
+				lbsInfo, err := notifs.CreateByKspNotification(kspNotif.Channel, kspNotif.Payload)
 				if err != nil {
 					r.logger.Warn("error parsing ksp notification", "ksp_notification", kspNotif)
 					continue
