@@ -13,7 +13,7 @@ const (
 	StartIDPair                     = "0-0"
 	KeySpacePrefix                  = "__keyspace@0__:"
 	ExpiredPayload                  = "expired"
-	ExpiredEventPattern             = KeySpacePrefix + "*" + MutexKeySep + "*" // pattern for expired events of mutex keys
+	MutexKeySpacePattern            = KeySpacePrefix + "*" + MutexKeySep + "*" // pattern for expired events of mutex keys
 	NotifyKeyspaceEventsCmd         = "notify-keyspace-events"
 	KeyspacePatternForExpiredEvents = "KEx"
 	RedisConsumerPrefix             = "redis-consumer-"

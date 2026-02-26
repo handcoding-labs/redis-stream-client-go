@@ -376,21 +376,16 @@ func TestKspNotifs(t *testing.T) {
 	// 1. Verify ConfigSet
 	res := redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
 	require.NoError(t, res.Err())
-	t.Logf("ConfigSet: cmd=%s value=%s", configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
 
 	// 2. Verify config took effect
 	cfg := redisClient.ConfigGet(ctx, "notify-keyspace-events")
 	require.NoError(t, cfg.Err())
-	t.Logf("notify-keyspace-events after set: %v", cfg.Val())
 
-	// 3. Log the pattern
-	t.Logf("Subscribing to pattern: [%s]", configs.ExpiredEventPattern)
-	pubsub := redisClient.PSubscribe(ctx, configs.ExpiredEventPattern)
+	pubsub := redisClient.PSubscribe(ctx, configs.MutexKeySpacePattern)
 
 	// 4. Verify subscription
 	time.Sleep(time.Millisecond * 100)
-	subsMsg, err := pubsub.Receive(ctx)
-	t.Logf("Subscription receive result: %v, err: %v", subsMsg, err)
+	pubsub.Receive(ctx)
 
 	kspChan := pubsub.Channel(redisgo.WithChannelHealthCheckInterval(1*time.Second), redisgo.WithChannelSendTimeout(10*time.Minute))
 
@@ -398,24 +393,20 @@ func TestKspNotifs(t *testing.T) {
 
 	// 5. Verify key set
 	keyName := "datastream" + configs.MutexKeySep + "1"
-	t.Logf("Setting key: [%s]", keyName)
 	setRes := redisClient.Set(ctx, keyName, "value1", 2*time.Second)
 	require.NoError(t, setRes.Err())
 
 	// 6. Verify key exists with TTL
-	ttl := redisClient.TTL(ctx, keyName)
-	t.Logf("Key TTL: %v", ttl.Val())
+	redisClient.TTL(ctx, keyName)
 
 	// 7. Verify active pubsub channels on server
-	channels := redisClient.PubSubChannels(ctx, "*")
-	t.Logf("Active pubsub channels: %v", channels.Val())
+	redisClient.PubSubChannels(ctx, "*")
 
 	success := false
 
 	for {
 		select {
 		case notif, ok := <-kspChan:
-			t.Logf("Received notification: ok=%v channel=%s payload=%s", ok, notif.Channel, notif.Payload)
 			require.True(t, ok)
 			require.NotNil(t, notif)
 			require.NotNil(t, notif.Payload)
@@ -425,10 +416,8 @@ func TestKspNotifs(t *testing.T) {
 			require.Equal(t, keyNameInChannel, keyName)
 			success = true
 		case <-time.After(5 * time.Second):
-			t.Logf("Timeout waiting for notification, success=%v", success)
 			// Check if key still exists
-			exists := redisClient.Exists(ctx, keyName)
-			t.Logf("Key still exists: %v", exists.Val())
+			redisClient.Exists(ctx, keyName)
 		}
 
 		if success {
