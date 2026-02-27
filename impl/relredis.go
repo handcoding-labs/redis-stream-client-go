@@ -103,7 +103,7 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string,
 	r := &RecoverableRedisStreamClient{
 		redisClient:       redisClient,
 		consumerID:        consumerID,
-		kspChan:           make(chan *redis.Message, 500),
+		kspChan:           make(chan *redis.Message, configs.DefaultKspChanSize),
 		hbInterval:        configs.DefaultHBInterval,
 		streamLocks:       make(map[string]*StreamLocksInfo),
 		serviceName:       serviceName,
