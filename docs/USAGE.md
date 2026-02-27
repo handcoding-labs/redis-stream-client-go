@@ -37,16 +37,22 @@ if err != nil {
 ### Configuration Options
 
 ```go
-client, err := impl.NewRedisStreamClient(
+import (
+    "log/slog"
+    rsc "github.com/handcoding-labs/redis-stream-client-go/impl"
+)
+
+client, err := rsc.NewRedisStreamClient(
     redisClient, 
     "my-service",
-    impl.WithLBSIdleTime(30*time.Second),        // Default: 40s
-    impl.WithLBSRecoveryCount(500),              // Default: 1000
-    impl.WithRetryConfig(impl.RetryConfig{
+    rsc.WithLBSIdleTime(30*time.Second),        // Default: 40s
+    rsc.WithLBSRecoveryCount(500),              // Default: 1000
+    rsc.WithRetryConfig(rsc.RetryConfig{
         MaxRetries:        -1,                   // Default: 5
         InitialRetryDelay: 100*time.Millisecond, // Default: 100 * time.Millisecond
         MaxRetryDelay:     30*time.Second,       // Default: 30 * time.Second
     }),
+    rsc.WithLogger(slog.New(customHandler)),    // Optional: custom logger
 )
 ```
 
@@ -55,6 +61,7 @@ client, err := impl.NewRedisStreamClient(
 | `WithLBSIdleTime(d)` | Time before message considered idle | 40s |
 | `WithLBSRecoveryCount(n)` | Messages to fetch during recovery | 1000 |
 | `WithRetryConfig(config)` | Configure retry behavior (see below) | 5 retries, 100ms-30s backoff |
+| `WithLogger(logger)` | Custom slog.Logger implementation | slog.Default() |
 
 **Notes:**
 - `LBSIdleTime` must be > 2× heartbeat interval (minimum 4s)
@@ -63,6 +70,7 @@ client, err := impl.NewRedisStreamClient(
     - `MaxRetries = -1` => unlimited retries (recommended for production)  
              `= 0` => fail immediately (not recommended)  
              `> 0` = specific number of retry attempts
+- Logger defaults to `slog.Default()` which writes to stderr. Use `WithLogger()` to provide custom logging handler (e.g., for Cloud Logging, JSON formatting, etc.)
 
 ## Initialization
 

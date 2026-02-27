@@ -8,9 +8,9 @@
 |---------|--------------|-----------------|---------|
 | Output channel | 500 | ~200 bytes | Notifications to consumer |
 | Broker input | 500 | ~200 bytes | Internal broker queue |
-| Keyspace channel | 100 | ~100 bytes | Redis pub/sub messages |
+| Keyspace channel | 500 | ~100 bytes | Redis pub/sub messages |
 
-**Base memory per client:** ~250KB for channels alone
+**Base memory per client:** ~300KB for channels alone
 
 ### Per-Stream Memory
 
