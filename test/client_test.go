@@ -838,6 +838,41 @@ func TestMainFlow(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestLoggerInjection(t *testing.T) {
+	redisContainer := setupSuite(t)
+
+	// create consumer client with custom logger
+	var logOutput []string
+	customHandler := &testHandler{output: &logOutput}
+	customLogger := slog.New(customHandler)
+
+	consumer := createConsumer("111", redisContainer, impl.WithLogger(customLogger))
+	opChan, err := consumer.Init(context.TODO())
+	require.NoError(t, err)
+	require.NotNil(t, opChan)
+
+	addNStreamsToLBS(t, redisContainer, 1)
+
+	// wait for the message to be processed
+	time.Sleep(1 * time.Second)
+
+	require.NotEmpty(t, logOutput)
+	found := false
+	// we're just testing logging here so first message is enough to check if logger is working
+	// we don't need to check all messages and it's always about the unacked messages
+	// as recovery is the first thing that happens when client starts
+	for _, msg := range logOutput {
+		if strings.Contains(msg, "no unacked messages found in LBS for consumer") {
+			found = true
+			break
+		}
+	}
+
+	require.True(t, found, "Expected log message not found in output")
+	err = consumer.Done(context.TODO())
+	require.NoError(t, err)
+}
+
 func addNStreamsToLBS(t *testing.T, redisContainer *redis.RedisContainer, n int) {
 	stringify := func(name string, i int) string {
 		return fmt.Sprintf("%s%d", name, i)
