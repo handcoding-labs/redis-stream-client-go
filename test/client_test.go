@@ -860,6 +860,9 @@ func TestLoggerInjection(t *testing.T) {
 	err = consumer.Done(context.TODO())
 	require.NoError(t, err)
 
+	// wait for the output channel to be closed
+	time.Sleep(time.Second)
+
 	require.NotEmpty(t, logOutput)
 	found := false
 	// we're just testing logging here so first message is enough to check if logger is working
