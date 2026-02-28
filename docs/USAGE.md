@@ -70,7 +70,7 @@ client, err := rsc.NewRedisStreamClient(
     - `MaxRetries = -1` => unlimited retries (recommended for production)  
              `= 0` => fail immediately (not recommended)  
              `> 0` = specific number of retry attempts
-- Logger defaults to `slog.Default()` which writes to stderr. Use `WithLogger()` to provide custom logging handler (e.g., for Cloud Logging, JSON formatting, etc.)
+- Logger defaults to `slog.Default()` which writes to `stderr`. Use `WithLogger()` to provide custom logging handler (e.g., for Cloud Logging, JSON formatting, etc.)
 
 ## Initialization
 
