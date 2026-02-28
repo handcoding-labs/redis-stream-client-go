@@ -856,6 +856,10 @@ func TestLoggerInjection(t *testing.T) {
 	// wait for the message to be processed
 	time.Sleep(1 * time.Second)
 
+	// clean up
+	err = consumer.Done(context.TODO())
+	require.NoError(t, err)
+
 	require.NotEmpty(t, logOutput)
 	found := false
 	// we're just testing logging here so first message is enough to check if logger is working
@@ -869,8 +873,6 @@ func TestLoggerInjection(t *testing.T) {
 	}
 
 	require.True(t, found, "Expected log message not found in output")
-	err = consumer.Done(context.TODO())
-	require.NoError(t, err)
 }
 
 func addNStreamsToLBS(t *testing.T, redisContainer *redis.RedisContainer, n int) {
