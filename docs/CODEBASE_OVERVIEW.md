@@ -91,11 +91,11 @@ When consumer processing is slower than message arrival:
 
 | Component | Memory | Scales With |
 |-----------|--------|-------------|
-| Base channels | ~250 KB | Fixed per client |
+| Base channels | ~300 KB | Fixed per client |
 | Per-stream overhead | ~2.5 KB | Active stream count |
 | Goroutine stacks | ~2 KB each | 3 + active streams |
 
-**Example:** 100 active streams ≈ 500 KB total memory
+**Example:** 100 active streams ≈ 550 KB total memory
 
 ## Error Handling
 

@@ -2,6 +2,7 @@ package impl
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
@@ -135,6 +136,14 @@ func WithRetryConfig(config RetryConfig) RecoverableRedisOption {
 		r.maxRetries = config.MaxRetries
 		r.initialRetryDelay = config.InitialRetryDelay
 		r.maxRetryDelay = config.MaxRetryDelay
+		return nil
+	}
+}
+
+// WithLogger allows clients to provide their own logger implementation based on slog.Logger
+func WithLogger(logger *slog.Logger) RecoverableRedisOption {
+	return func(r *RecoverableRedisStreamClient) error {
+		r.logger = logger
 		return nil
 	}
 }

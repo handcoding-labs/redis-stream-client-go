@@ -417,41 +417,6 @@ func (r *RecoverableRedisStreamClient) closeOutputChan() <span class="cov0" titl
         close(r.outputChan)          // close output channel
 }</span>
 
-// getGoogleCloudLogger returns a slog.Logger that writes to stdout.
-// This logger is compatible with Google Cloud Logging; see
-// https://cloud.google.com/logging/docs/structured-logging for more
-// details on structured logging that Cloud Logging expects.
-func getGoogleCloudLogger() *slog.Logger <span class="cov0" title="0">{
-        return slog.New(slog.NewJSONHandler(os.Stdout, &amp;slog.HandlerOptions{
-                ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr </span><span class="cov0" title="0">{
-                        switch a.Key </span>{
-                        case slog.LevelKey:<span class="cov0" title="0">
-                                a.Key = "severity"
-                                if level, ok := a.Value.Any().(slog.Level); ok </span><span class="cov0" title="0">{
-                                        switch level </span>{
-                                        case slog.LevelDebug:<span class="cov0" title="0">
-                                                a.Value = slog.StringValue("DEBUG")</span>
-                                        case slog.LevelInfo:<span class="cov0" title="0">
-                                                a.Value = slog.StringValue("INFO")</span>
-                                        case slog.LevelWarn:<span class="cov0" title="0">
-                                                a.Value = slog.StringValue("WARNING")</span>
-                                        case slog.LevelError:<span class="cov0" title="0">
-                                                a.Value = slog.StringValue("ERROR")</span>
-                                        default:<span class="cov0" title="0">
-                                                a.Value = slog.StringValue("DEFAULT")</span>
-                                        }
-                                }
-                        case slog.TimeKey:<span class="cov0" title="0">
-                                a.Key = "timestamp"</span>
-                        case slog.MessageKey:<span class="cov0" title="0">
-                                a.Key = "message"</span>
-                        }
-                        <span class="cov0" title="0">return a</span>
-                },
-                Level: slog.LevelDebug,
-        }))
-}
-</pre>
 		
 		<pre class="file" id="file2" style="display: none">package impl
 
@@ -813,6 +778,14 @@ func WithOutputChanSize(size int) RecoverableRedisOption <span class="cov0" titl
                 return nil</span>
         }
 }
+
+// WithLogger allows clients to provide their own logger implementation based on slog.Logger
+func WithLogger(logger *slog.Logger) RecoverableRedisOption {
+	return func(r *RecoverableRedisStreamClient) error {
+		r.logger = logger
+		return nil
+	}
+}
 </pre>
 		
 		<pre class="file" id="file4" style="display: none">package impl
@@ -924,7 +897,7 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string,
                 lbsRecoveryCount: configs.DefaultLBSRecoveryCount,
                 kspChanSize:      configs.DefaultKspChanSize,
                 kspChanTimeout:   configs.DefaultKspChanTimeout,
-                logger:           getGoogleCloudLogger(),
+                logger:           slog.Default(),
         }
 
         for _, opt := range opts </span><span class="cov0" title="0">{
