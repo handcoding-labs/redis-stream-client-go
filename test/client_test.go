@@ -843,7 +843,7 @@ func TestLoggerInjection(t *testing.T) {
 
 	// create consumer client with custom logger
 	var logOutput []string
-	customHandler := &testHandler{output: &logOutput}
+	customHandler := &captureHandler{output: &logOutput}
 	customLogger := slog.New(customHandler)
 
 	consumer := createConsumer("111", redisContainer, impl.WithLogger(customLogger))
