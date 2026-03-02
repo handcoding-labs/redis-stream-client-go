@@ -23,6 +23,7 @@ type Recorder interface {
 	RecordStreamProcessingEnd(streamName string, startTime time.Time)
 	// RecordKspNotification records the receipt of a keyspace notification for a stream.
 	RecordKspNotification(streamName string)
-	// RecordKspNotificationDropped records the event of a keyspace notification being dropped due to a full broker channel.
+	// RecordKspNotificationDropped records the event of a keyspace notification being dropped
+	// due to a full broker channel.
 	RecordKspNotificationDropped()
 }

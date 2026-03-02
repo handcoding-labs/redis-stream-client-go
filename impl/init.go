@@ -59,7 +59,8 @@ func (r *RecoverableRedisStreamClient) subscribeToExpiredEvents(ctx context.Cont
 				// message sent successfully to kspChan
 			default:
 				// kspChan is full or blocked, log the timeout and drop the message
-				r.logger.Warn("kspChan is full or blocked, dropping ksp notification", "channel", msg.Channel, "payload", msg.Payload)
+				r.logger.Warn("kspChan is full or blocked, dropping ksp notification",
+					"channel", msg.Channel, "payload", msg.Payload)
 				r.metricsRecorder.RecordKspNotificationDropped()
 			}
 		}
@@ -124,7 +125,9 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) er
 	}
 
 	r.metricsRecorder.RecordStartupRecovery(true, len(unackedMessages), time.Since(start))
-	r.logger.Info("successfully recovered unacked messages", "count", len(unackedMessages), "duration_seconds", time.Since(start).Seconds())
+	r.logger.Info("successfully recovered unacked messages",
+		"count", len(unackedMessages), "duration_seconds", time.Since(start).Seconds())
+
 	return nil
 }
 

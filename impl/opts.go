@@ -149,7 +149,8 @@ func WithLogger(logger *slog.Logger) RecoverableRedisOption {
 	}
 }
 
-// WithMetricsRecorder allows clients to provide their own metrics recorder implementation based on MetricsRecorder interface
+// WithMetricsRecorder allows clients to provide their own metrics recorder
+// implementation based on MetricsRecorder interface
 func WithMetricsRecorder(recorder metrics.Recorder) RecoverableRedisOption {
 	return func(r *RecoverableRedisStreamClient) error {
 		r.metricsRecorder = recorder
