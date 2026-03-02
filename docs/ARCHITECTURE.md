@@ -108,6 +108,11 @@ The library uses an internal `NotificationBroker` to safely manage notifications
 
 ## Design Decisions
 
+- **Metrics instrumentation**: the library exposes a `metrics.Recorder` interface so consumers can
+  plug in any monitoring system (Prometheus example is provided).  This lets you track
+  recovery latency, lock contention, stream processing times, and keyspace notifications.
+
+
 **Why one goroutine per stream for lock extension?**
 - Simplicity: each stream is independent
 - Fault isolation: one stuck stream doesn't affect others

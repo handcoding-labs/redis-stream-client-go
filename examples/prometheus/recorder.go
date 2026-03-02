@@ -1,5 +1,9 @@
 // Package prometheus provides a reference MetricsRecorder implementation
 // using Prometheus. Copy this file into your own codebase and adjust as needed.
+//
+// **Important:** this example must be updated whenever the
+// `metrics.Recorder` interface changes.  The method names used
+// here match the interface defined in `metrics/recorder.go`.
 package prometheusmetric
 
 import (
@@ -15,11 +19,14 @@ type PrometheusRecorder struct {
 	claimDurationSeconds            *prometheus.HistogramVec
 	lockExtensionTotal              *prometheus.CounterVec
 	lockReleaseTotal                *prometheus.CounterVec
-	recoveryTotal                   *prometheus.CounterVec
-	recoveryDurationSeconds         *prometheus.HistogramVec
+	startupRecoveryTotal            *prometheus.CounterVec
+	startupRecoveryDurationSeconds  *prometheus.HistogramVec
 	streamProcessingDurationSeconds *prometheus.HistogramVec
 	kspNotificationTotal            *prometheus.CounterVec
 	kspNotificationDroppedTotal     prometheus.Counter
+
+	// internal state
+	streamStarts map[string]time.Time
 }
 
 // NewPrometheusRecorder creates a new PrometheusRecorder and registers
@@ -49,14 +56,14 @@ func NewPrometheusRecorder(reg prometheus.Registerer) *PrometheusRecorder {
 			Help: "Total number of lock release attempts, labeled by stream and success.",
 		}, []string{"stream", "success"}),
 
-		recoveryTotal: factory.NewCounterVec(prometheus.CounterOpts{
-			Name: "redis_mutex_recovery_total",
-			Help: "Total number of recovery attempts, labeled by stream and success.",
-		}, []string{"stream", "success"}),
+		startupRecoveryTotal: factory.NewCounterVec(prometheus.CounterOpts{
+			Name: "redis_mutex_startup_recovery_total",
+			Help: "Total number of startup recovery attempts, labeled by success.",
+		}, []string{"success"}),
 
-		recoveryDurationSeconds: factory.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "redis_mutex_recovery_duration_seconds",
-			Help:    "Duration of recovery attempts in seconds.",
+		startupRecoveryDurationSeconds: factory.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "redis_mutex_startup_recovery_duration_seconds",
+			Help:    "Duration of startup recovery in seconds.",
 			Buckets: prometheus.DefBuckets,
 		}, []string{"stream"}),
 
@@ -83,21 +90,40 @@ func (p *PrometheusRecorder) RecordClaimAttempt(streamName string, success bool,
 	p.claimDurationSeconds.WithLabelValues(streamName).Observe(duration.Seconds())
 }
 
-func (p *PrometheusRecorder) RecordLockExtension(streamName string, success bool) {
+func (p *PrometheusRecorder) RecordLockAcquisitionAttempt(streamName string, success bool, duration time.Duration) {
+	p.startupRecoveryTotal.WithLabelValues(boolToString(success)).Inc()
+	p.startupRecoveryDurationSeconds.WithLabelValues(streamName).Observe(duration.Seconds())
+}
+
+func (p *PrometheusRecorder) RecordLockExtensionAttempt(streamName string, success bool) {
 	p.lockExtensionTotal.WithLabelValues(streamName, boolToString(success)).Inc()
 }
 
-func (p *PrometheusRecorder) RecordLockRelease(streamName string, success bool) {
+func (p *PrometheusRecorder) RecordLockReleaseAttempt(streamName string, success bool) {
 	p.lockReleaseTotal.WithLabelValues(streamName, boolToString(success)).Inc()
 }
 
-func (p *PrometheusRecorder) RecordRecoveryAttempt(streamName string, success bool, duration time.Duration) {
-	p.recoveryTotal.WithLabelValues(streamName, boolToString(success)).Inc()
-	p.recoveryDurationSeconds.WithLabelValues(streamName).Observe(duration.Seconds())
+// RecordStartupRecovery implements the interface method for startup recovery.
+func (p *PrometheusRecorder) RecordStartupRecovery(success bool, unackedCount int, duration time.Duration) {
+	p.startupRecoveryTotal.WithLabelValues(boolToString(success)).Inc()
+	// also record duration (unackedCount not stored here)
+	p.startupRecoveryDurationSeconds.WithLabelValues("").Observe(duration.Seconds())
 }
 
-func (p *PrometheusRecorder) RecordStreamProcessingDuration(streamName string, duration time.Duration) {
-	p.streamProcessingDurationSeconds.WithLabelValues(streamName).Observe(duration.Seconds())
+func (p *PrometheusRecorder) RecordStreamProcessingStart(streamName string, start time.Time) {
+	if p.streamStarts == nil {
+		p.streamStarts = make(map[string]time.Time)
+	}
+	p.streamStarts[streamName] = start
+}
+
+func (p *PrometheusRecorder) RecordStreamProcessingEnd(streamName string, end time.Time) {
+	start, ok := p.streamStarts[streamName]
+	if ok {
+		duration := end.Sub(start)
+		p.streamProcessingDurationSeconds.WithLabelValues(streamName).Observe(duration.Seconds())
+		delete(p.streamStarts, streamName)
+	}
 }
 
 func (p *PrometheusRecorder) RecordKspNotification(streamName string) {

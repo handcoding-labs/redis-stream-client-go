@@ -59,14 +59,14 @@ func TestLBS(t *testing.T) {
 	require.NoError(t, res.Err())
 
 	// create consumer1 client
-	consumer1 := createConsumer("111", redisContainer)
+	consumer1, rec1 := createConsumer("111", redisContainer)
 	require.NotNil(t, consumer1)
 	opChan1, err := consumer1.Init(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, opChan1)
 
 	// create consumer2 client
-	consumer2 := createConsumer("222", redisContainer)
+	consumer2, rec2 := createConsumer("222", redisContainer)
 	require.NotNil(t, consumer2)
 	opChan2, err := consumer2.Init(ctx)
 	require.NoError(t, err)
@@ -132,6 +132,20 @@ func TestLBS(t *testing.T) {
 
 	_, ok = <-opChan2
 	require.False(t, ok)
+
+	// verify metrics
+	require.Equal(t, 1, rec1.StartupRecoveryCount(), "consumer1 startup recovery count")
+	require.Equal(t, 0, rec1.ClaimCount(), "consumer1 claim count")
+	require.Equal(t, 1, rec1.LockAcquisitionCount(), "consumer1 lock acquisitions")
+	require.Equal(t, 1, rec1.LockReleaseCount(), "consumer1 lock releases")
+	require.Equal(t, 1, rec1.StreamProcessingStartCount(), "consumer1 stream start count")
+	require.Equal(t, 1, rec1.StreamProcessingEndCount(), "consumer1 stream end count")
+	require.Equal(t, 1, rec2.StartupRecoveryCount(), "consumer2 startup recovery count")
+	require.Equal(t, 0, rec2.ClaimCount(), "consumer2 claim count")
+	require.Equal(t, 1, rec2.LockAcquisitionCount(), "consumer2 lock acquisitions")
+	require.Equal(t, 1, rec2.LockReleaseCount(), "consumer2 lock releases")
+	require.Equal(t, 1, rec2.StreamProcessingStartCount(), "consumer2 stream start count")
+	require.Equal(t, 1, rec2.StreamProcessingEndCount(), "consumer2 stream end count")
 }
 
 func TestLBSRecovery(t *testing.T) {
@@ -143,7 +157,7 @@ func TestLBSRecovery(t *testing.T) {
 	res := redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
 	require.NoError(t, res.Err())
 
-	consumer := createConsumer("111", redisContainer)
+	consumer, rec1 := createConsumer("111", redisContainer)
 	opChan, err := consumer.Init(ctxWCancel)
 	require.NoError(t, err)
 	require.NotNil(t, opChan)
@@ -159,7 +173,7 @@ func TestLBSRecovery(t *testing.T) {
 	time.Sleep(5 * time.Second)
 
 	// restart consumer
-	consumer = createConsumer("111", redisContainer, impl.WithLBSIdleTime(4*time.Second))
+	consumer, rec2 := createConsumer("111", redisContainer, impl.WithLBSIdleTime(4*time.Second))
 	opChan, err = consumer.Init(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, opChan)
@@ -187,6 +201,15 @@ func TestLBSRecovery(t *testing.T) {
 	require.NoError(t, err)
 	_, ok := <-opChan
 	require.False(t, ok)
+
+	// metrics assertions
+	require.Equal(t, 1, rec1.StartupRecoveryCount(), "initial consumer startup count")
+	require.Equal(t, 1, rec1.LockAcquisitionCount(), "initial consumer lock acquisitions")
+	require.Equal(t, 0, rec1.ClaimCount(), "initial consumer claim count")
+
+	require.Equal(t, 1, rec2.StartupRecoveryCount(), "restarted consumer startup count")
+	require.Equal(t, 1, rec2.LockAcquisitionCount(), "restarted consumer lock acquisitions")
+	require.Equal(t, 0, rec2.ClaimCount(), "restarted consumer claim count")
 }
 
 // See #issue 55 for more details
@@ -199,7 +222,7 @@ func TestLBSRecoveryOfDiscontinuousStreamMessages(t *testing.T) {
 	res := redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
 	require.NoError(t, res.Err())
 
-	consumer := createConsumer("111", redisContainer)
+	consumer, rec1 := createConsumer("111", redisContainer)
 	opChan, err := consumer.Init(ctxWCancel)
 	require.NoError(t, err)
 	require.NotNil(t, opChan)
@@ -219,7 +242,7 @@ func TestLBSRecoveryOfDiscontinuousStreamMessages(t *testing.T) {
 	time.Sleep(6 * time.Second)
 
 	// different consumer comes up
-	consumer = createConsumer("222", redisContainer, impl.WithLBSIdleTime(4*time.Second))
+	consumer, rec2 := createConsumer("222", redisContainer, impl.WithLBSIdleTime(4*time.Second))
 	opChan, err = consumer.Init(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, opChan)
@@ -245,6 +268,32 @@ func TestLBSRecoveryOfDiscontinuousStreamMessages(t *testing.T) {
 
 	require.Empty(t, expectedToBeRecovered)
 
+	// verify metrics for first consumer
+	require.Equal(t, 1, rec1.StartupRecoveryCount(), "first consumer startup")
+	require.Equal(t, 5, rec1.LockAcquisitionCount(), "first consumer lock acquisitions")
+	require.Equal(t, 2, rec1.LockReleaseCount(), "first consumer lock releases (DoneStream)")
+	require.Equal(t, 5, rec1.StreamProcessingStartCount(), "first consumer stream start count")
+	require.Equal(t, 2, rec1.StreamProcessingEndCount(), "first consumer stream end count due to acked streams")
+
+	// verify metrics for second consumer
+	require.Equal(t, 1, rec2.StartupRecoveryCount(), "second consumer startup")
+	require.Equal(t, 3, rec2.LockAcquisitionCount(), "second consumer lock acquisitions for recovered streams")
+	require.Equal(t, 0, rec2.LockReleaseCount(), "second consumer lock releases (none yet)")
+	require.Equal(t, 3, rec2.StreamProcessingStartCount(), "second consumer stream start count")
+
+	// verify metrics for first consumer
+	require.Equal(t, 1, rec1.StartupRecoveryCount(), "first consumer startup")
+	require.Equal(t, 5, rec1.LockAcquisitionCount(), "first consumer lock acquisitions")
+	require.Equal(t, 2, rec1.LockReleaseCount(), "first consumer lock releases (DoneStream)")
+	require.Equal(t, 5, rec1.StreamProcessingStartCount(), "first consumer stream start count")
+	require.Equal(t, 2, rec1.StreamProcessingEndCount(), "first consumer stream end count due to acked streams")
+
+	// verify metrics for second consumer
+	require.Equal(t, 1, rec2.StartupRecoveryCount(), "second consumer startup")
+	require.Equal(t, 3, rec2.LockAcquisitionCount(), "second consumer lock acquisitions for recovered streams")
+	require.Equal(t, 0, rec2.LockReleaseCount(), "second consumer lock releases (none yet)")
+	require.Equal(t, 3, rec2.StreamProcessingStartCount(), "second consumer stream start count")
+
 	err = consumer.Done(ctx)
 	require.NoError(t, err)
 	_, ok := <-opChan
@@ -262,14 +311,14 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	require.NoError(t, res.Err())
 
 	// create consumer1 client
-	consumer1 := createConsumer("111", redisContainer)
+	consumer1, rec1 := createConsumer("111", redisContainer)
 	require.NotNil(t, consumer1)
 	opChan1, err := consumer1.Init(ctxWCancel)
 	require.NoError(t, err)
 	require.NotNil(t, opChan1)
 
 	// create consumer2 client
-	consumer2 := createConsumer("222", redisContainer)
+	consumer2, rec2 := createConsumer("222", redisContainer)
 	require.NotNil(t, consumer2)
 	opChan2, err := consumer2.Init(ctxWOCancel)
 	require.NoError(t, err)
@@ -278,7 +327,7 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	addNStreamsToLBS(t, redisContainer, 1)
 
 	// create consumer3 client
-	consumer3 := createConsumer("333", redisContainer)
+	consumer3, rec3 := createConsumer("333", redisContainer)
 	require.NotNil(t, consumer3)
 	opChan3, err := consumer3.Init(ctxWOCancel)
 	require.NoError(t, err)
@@ -329,6 +378,12 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	require.NoError(t, err)
 	err = consumer3.Done(ctxWOCancel)
 	require.NoError(t, err)
+
+	// assertions
+	require.Equal(t, 1, rec1.StartupRecoveryCount(), "consumer1 startup")
+	require.Equal(t, 1, rec1.LockAcquisitionCount(), "consumer1 lock acquisition before crash")
+	require.Equal(t, 1, rec2.ClaimCount(), "consumer2 made one claim attempt")
+	require.Equal(t, 1, rec3.ClaimCount(), "consumer3 attempted claim")
 }
 
 func TestBlockingRead(t *testing.T) {
@@ -339,7 +394,7 @@ func TestBlockingRead(t *testing.T) {
 	res := redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
 	require.NoError(t, res.Err())
 
-	consumer := createConsumer("111", redisContainer)
+	consumer, rec := createConsumer("111", redisContainer)
 	opChan, err := consumer.Init(ctx)
 	require.NoError(t, err)
 
@@ -365,6 +420,11 @@ func TestBlockingRead(t *testing.T) {
 	require.NoError(t, err)
 	_, ok := <-opChan
 	require.False(t, ok)
+
+	// metrics
+	require.Equal(t, 1, rec.StartupRecoveryCount(), "blocking read consumer startup")
+	require.Equal(t, 1, rec.LockAcquisitionCount(), "blocking read lock acquisition when stream added")
+	require.Equal(t, 0, rec.ClaimCount(), "blocking read claim count")
 }
 
 func TestKspNotifs(t *testing.T) {
@@ -372,6 +432,12 @@ func TestKspNotifs(t *testing.T) {
 	redisContainer := setupSuite(t)
 
 	redisClient := newRedisClient(redisContainer)
+
+	// start dummy consumer for metrics
+	consumer, rec := createConsumer("111", redisContainer)
+	opChan, err := consumer.Init(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, opChan)
 
 	// 1. Verify ConfigSet
 	res := redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
@@ -385,7 +451,7 @@ func TestKspNotifs(t *testing.T) {
 
 	// 4. Verify subscription
 	time.Sleep(time.Millisecond * 100)
-	_, err := pubsub.Receive(ctx)
+	_, err = pubsub.Receive(ctx)
 	require.NoError(t, err)
 
 	kspChan := pubsub.Channel(redisgo.WithChannelHealthCheckInterval(1*time.Second), redisgo.WithChannelSendTimeout(10*time.Minute))
@@ -431,6 +497,11 @@ func TestKspNotifs(t *testing.T) {
 	_, ok := <-kspChan
 	require.False(t, ok)
 	require.NoError(t, redisClient.Close())
+
+	// metrics
+	require.Equal(t, 1, rec.StartupRecoveryCount(), "ksp notif test consumer startup")
+	require.Equal(t, 0, rec.ClaimCount(), "ksp notif test consumer claim count")
+	require.Equal(t, 0, rec.LockAcquisitionCount(), "ksp notif test consumer lock acquisitions")
 }
 
 func TestKspNotifsBulk(t *testing.T) {
@@ -444,6 +515,7 @@ func TestKspNotifsBulk(t *testing.T) {
 	rc := newRedisClient(redisContainer)
 
 	consumers := make(map[int]types.RedisStreamClient)
+	recs := make(map[int]*testMetricsRecorder)
 	cancelFuncs := make(map[int]context.CancelFunc)
 	var outputChans []<-chan notifs.RecoverableRedisNotification
 
@@ -451,13 +523,14 @@ func TestKspNotifsBulk(t *testing.T) {
 		ctxWithCancel := context.TODO()
 		ctx, cancel := context.WithCancel(ctxWithCancel)
 
-		// create consumer1 client
-		consumer := createConsumer(fmt.Sprint(i), redisContainer)
+		// create consumer client
+		consumer, rec := createConsumer(fmt.Sprint(i), redisContainer)
 		opChan, err := consumer.Init(ctx)
 		require.NoError(t, err)
 		outputChans = append(outputChans, opChan)
 
 		consumers[i] = consumer
+		recs[i] = rec
 		cancelFuncs[i] = cancel
 	}
 
@@ -527,6 +600,13 @@ func TestKspNotifsBulk(t *testing.T) {
 	}
 
 	require.Equal(t, totalExpected, totalActual)
+
+	// metrics: each consumer should have recorded exactly one startup recovery
+	for i := 0; i < totalConsumers; i++ {
+		rec := recs[i]
+		require.NotNil(t, rec)
+		require.Equal(t, 1, rec.StartupRecoveryCount(), "consumer %d startup count", i)
+	}
 }
 
 func TestXAckDelBehavior(t *testing.T) {
@@ -537,7 +617,7 @@ func TestXAckDelBehavior(t *testing.T) {
 	res := redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
 	require.NoError(t, res.Err())
 
-	consumer := createConsumer("111", redisContainer)
+	consumer, rec := createConsumer("111", redisContainer)
 	opChan, err := consumer.Init(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, opChan)
@@ -572,6 +652,11 @@ func TestXAckDelBehavior(t *testing.T) {
 
 	// Verify pending count is 0 (message was acknowledged)
 	pendingAfter := redisClient.XPending(ctx, "consumer-input", "consumer-group")
+
+	// metrics
+	require.Equal(t, 1, rec.StartupRecoveryCount(), "xack behavior consumer startup")
+	require.Equal(t, 1, rec.LockAcquisitionCount(), "xack behavior lock acquired")
+	require.Equal(t, 1, rec.LockReleaseCount(), "xack behavior lock released (DoneStream)")
 	require.Equal(t, int64(0), pendingAfter.Val().Count, "No pending messages should remain")
 
 	// Verify the stream still exists (not deleted)
@@ -594,7 +679,7 @@ func TestXAckDelMultipleStreams(t *testing.T) {
 	res := redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
 	require.NoError(t, res.Err())
 
-	consumer := createConsumer("111", redisContainer)
+	consumer, rec := createConsumer("111", redisContainer)
 	opChan, err := consumer.Init(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, opChan)
@@ -658,6 +743,13 @@ func TestXAckDelMultipleStreams(t *testing.T) {
 	require.NoError(t, streamInfoFinal.Err())
 	require.NotNil(t, streamInfoFinal.Val())
 	require.Len(t, streamInfoFinal.Val().Entries, 0, "All entries should be deleted")
+
+	// metrics assertions
+	require.Equal(t, 1, rec.StartupRecoveryCount(), "multiple streams consumer startup")
+	require.Equal(t, 3, rec.LockAcquisitionCount(), "multiple streams lock acquisitions")
+	require.Equal(t, 3, rec.LockReleaseCount(), "multiple streams lock releases (2 explicit + 1 Done())")
+	require.Equal(t, 3, rec.StreamProcessingStartCount(), "multiple streams processing start entries")
+	require.Equal(t, 3, rec.StreamProcessingEndCount(), "multiple streams processing end entries")
 }
 
 func TestMainFlow(t *testing.T) {
@@ -679,14 +771,14 @@ func TestMainFlow(t *testing.T) {
 	consumer2Ctx, consumer2CancelFunc := context.WithCancel(ctxWithCancel)
 
 	// create consumer1 client
-	consumer1 := createConsumer("111", redisContainer)
+	consumer1, rec1 := createConsumer("111", redisContainer)
 	require.NotNil(t, consumer1)
 	opChan1, err := consumer1.Init(consumer1Ctx)
 	require.NoError(t, err)
 	require.NotNil(t, opChan1)
 
 	// create consumer2 client
-	consumer2 := createConsumer("222", redisContainer)
+	consumer2, rec2 := createConsumer("222", redisContainer)
 	require.NotNil(t, consumer2)
 	opChan2, err := consumer2.Init(consumer2Ctx)
 	require.NoError(t, err)
@@ -836,6 +928,13 @@ func TestMainFlow(t *testing.T) {
 	// check if outputChan is closed
 	_, ok := <-opChan2
 	require.False(t, ok)
+
+	// metrics assertions
+	require.Equal(t, 1, rec1.StartupRecoveryCount(), "consumer1 startup")
+	require.Equal(t, 1, rec1.LockAcquisitionCount(), "consumer1 initial lock acquired")
+	require.Equal(t, 0, rec1.ClaimCount(), "consumer1 did not claim")
+	require.Equal(t, 1, rec2.StartupRecoveryCount(), "consumer2 startup")
+	require.GreaterOrEqual(t, rec2.ClaimCount(), 1, "consumer2 performed at least one claim")
 }
 
 func TestLoggerInjection(t *testing.T) {
@@ -846,7 +945,7 @@ func TestLoggerInjection(t *testing.T) {
 	customHandler := &captureHandler{output: &logOutput}
 	customLogger := slog.New(customHandler)
 
-	consumer := createConsumer("111", redisContainer, impl.WithLogger(customLogger))
+	consumer, rec := createConsumer("111", redisContainer, impl.WithLogger(customLogger))
 	opChan, err := consumer.Init(context.TODO())
 	require.NoError(t, err)
 	require.NotNil(t, opChan)
@@ -862,6 +961,9 @@ func TestLoggerInjection(t *testing.T) {
 
 	// wait for the output channel to be closed
 	time.Sleep(time.Second)
+
+	// metrics
+	require.Equal(t, 1, rec.StartupRecoveryCount(), "logger injection consumer startup")
 
 	require.NotEmpty(t, logOutput)
 	found := false
@@ -905,21 +1007,22 @@ func addNStreamsToLBS(t *testing.T, redisContainer *redis.RedisContainer, n int)
 	}
 }
 
-func createConsumer(name string, redisContainer *redis.RedisContainer, opts ...impl.RecoverableRedisOption) types.RedisStreamClient {
+func createConsumer(name string, redisContainer *redis.RedisContainer, opts ...impl.RecoverableRedisOption) (types.RedisStreamClient, *testMetricsRecorder) {
 	_ = os.Setenv("POD_NAME", name)
 	// create a new redis client
 	// always override config for tests
+	rec := &testMetricsRecorder{}
 	opts = append(opts, impl.WithForceConfigOverride(),
 		impl.WithKspChanSize(500),
 		impl.WithKspChanTimeout(2*time.Minute),
 		impl.WithLBSRecoveryCount(500),
 		impl.WithOutputChanSize(500),
-		impl.WithMetricsRecorder(&testMetricsRecorder{}))
+		impl.WithMetricsRecorder(rec))
 	relredis, err := impl.NewRedisStreamClient(newRedisClient(redisContainer), "consumer", opts...)
 	if err != nil {
-		return nil
+		return nil, rec
 	}
-	return relredis
+	return relredis, rec
 }
 
 func listenToKsp(t *testing.T, outputChan <-chan notifs.RecoverableRedisNotification, consumers map[int]types.RedisStreamClient, i int) {

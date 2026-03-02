@@ -9,7 +9,9 @@ type Recorder interface {
 	RecordStartupRecovery(success bool, unackedCount int, duration time.Duration)
 	// RecordClaimAttempt records an attempt to claim a mutex, including whether it was successful and how long it took.
 	RecordClaimAttempt(streamName string, success bool, duration time.Duration)
-	// RecordRecoveryAttempt records an attempt to recover a lock, including whether it was successful and how long it took.
+	// RecordLockAcquisitionAttempt records an attempt to acquire or recover a lock (either during
+	// startup recovery or when claiming an expired stream), including whether it was successful
+	// and how long it took.
 	RecordLockAcquisitionAttempt(streamName string, success bool, duration time.Duration)
 	// RecordLockExtension records an attempt to extend a lock, including whether it was successful.
 	RecordLockExtensionAttempt(streamName string, success bool)

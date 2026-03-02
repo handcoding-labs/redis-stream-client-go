@@ -62,6 +62,7 @@ client, err := rsc.NewRedisStreamClient(
 | `WithLBSRecoveryCount(n)` | Messages to fetch during recovery | 1000 |
 | `WithRetryConfig(config)` | Configure retry behavior (see below) | 5 retries, 100ms-30s backoff |
 | `WithLogger(logger)` | Custom slog.Logger implementation | slog.Default() |
+| `WithMetricsRecorder(recorder)` | Provide your own `metrics.Recorder` implementation for instrumentation | &metrics.NoopRecorder{} |
 
 **Notes:**
 - `LBSIdleTime` must be > 2× heartbeat interval (minimum 4s)
@@ -71,6 +72,8 @@ client, err := rsc.NewRedisStreamClient(
              `= 0` => fail immediately (not recommended)  
              `> 0` = specific number of retry attempts
 - Logger defaults to `slog.Default()` which writes to `stderr`. Use `WithLogger()` to provide custom logging handler (e.g., for Cloud Logging, JSON formatting, etc.)
+- **Metrics:** to collect operational metrics, pass a recorder via `WithMetricsRecorder`.  A Prometheus implementation is included under
+  `examples/prometheus`; see [docs/METRICS.md](METRICS.md) for full details.
 
 ## Initialization
 

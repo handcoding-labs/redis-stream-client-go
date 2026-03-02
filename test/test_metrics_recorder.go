@@ -15,59 +15,38 @@ type testMetricsRecorder struct {
 	lockReleaseCount       int
 	kspNotificationCount   int
 	kspNotificationDropped int
-
-	orphanClaimFailures     int
-	lockAcquisitionFailures int
-	lockExtensionFailures   int
-	lockReleaseFailures     int
-	startupRecoveryFailures int
-	streamProcessingStart   map[string]time.Time
-	streamProcessingEnd     map[string]time.Time
+	streamProcessingStart  map[string]time.Time
+	streamProcessingEnd    map[string]time.Time
 }
 
 func (t *testMetricsRecorder) RecordStartupRecovery(success bool, unackedCount int, duration time.Duration) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.startupRecoveryCount++
-	if !success {
-		t.startupRecoveryFailures++
-	}
 }
 
 func (t *testMetricsRecorder) RecordClaimAttempt(streamName string, success bool, duration time.Duration) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.claimCount++
-	if !success {
-		t.claimCount++
-	}
 }
 
 func (t *testMetricsRecorder) RecordLockAcquisitionAttempt(streamName string, success bool, duration time.Duration) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.lockAcquisitionCount++
-	if !success {
-		t.lockAcquisitionFailures++
-	}
 }
 
 func (t *testMetricsRecorder) RecordLockExtensionAttempt(streamName string, success bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.lockExtensionCount++
-	if !success {
-		t.lockExtensionFailures++
-	}
 }
 
 func (t *testMetricsRecorder) RecordLockReleaseAttempt(streamName string, success bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.lockReleaseCount++
-	if !success {
-		t.lockReleaseFailures++
-	}
 }
 
 func (t *testMetricsRecorder) RecordStreamProcessingStart(streamName string, start time.Time) {
@@ -98,4 +77,65 @@ func (t *testMetricsRecorder) RecordKspNotificationDropped() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.kspNotificationDropped++
+}
+
+// Getter methods to support assertions in tests
+func (t *testMetricsRecorder) StartupRecoveryCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.startupRecoveryCount
+}
+
+func (t *testMetricsRecorder) StartupRecoveryFailures() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.startupRecoveryCount
+}
+
+func (t *testMetricsRecorder) ClaimCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.claimCount
+}
+
+func (t *testMetricsRecorder) LockAcquisitionCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.lockAcquisitionCount
+}
+
+func (t *testMetricsRecorder) LockExtensionCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.lockExtensionCount
+}
+
+func (t *testMetricsRecorder) LockReleaseCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.lockReleaseCount
+}
+
+func (t *testMetricsRecorder) KspNotificationCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.kspNotificationCount
+}
+
+func (t *testMetricsRecorder) KspNotificationDropped() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.kspNotificationDropped
+}
+
+func (t *testMetricsRecorder) StreamProcessingStartCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.streamProcessingStart)
+}
+
+func (t *testMetricsRecorder) StreamProcessingEndCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.streamProcessingEnd)
 }

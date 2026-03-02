@@ -33,7 +33,19 @@ for notification := range outputChan {
         go process(notification.Payload.DataStreamName)
     case notifs.StreamExpired:
         client.Claim(ctx, notification.Payload)
-```
+``` 
+
+## Metrics
+
+The client can emit detailed operational metrics via the `metrics.Recorder` interface.  Supply a
+recorder when creating the client with `impl.WithMetricsRecorder(...)`.  A Prometheus example is
+included under `examples/prometheus/` and full metric semantics are documented in
+[`docs/METRICS.md`](docs/METRICS.md).
+
+```go
+rec := prometheusmetric.NewPrometheusRecorder(prometheus.DefaultRegisterer)
+client, _ := impl.NewRedisStreamClient(redisClient, "my-service", impl.WithMetricsRecorder(rec))
+``````
 # Architecture
 
 ## Threading Model
