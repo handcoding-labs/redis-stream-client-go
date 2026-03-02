@@ -2,6 +2,8 @@ package impl
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
 	"github.com/handcoding-labs/redis-stream-client-go/types/errs"
@@ -66,4 +68,13 @@ func (r *RecoverableRedisStreamClient) isStreamProcessingDone(dataStreamName str
 	r.streamLocksMutex.Lock()
 	defer r.streamLocksMutex.Unlock()
 	return r.streamLocks[dataStreamName] == nil
+}
+
+func (r *RecoverableRedisStreamClient) extractStreamnameFromKspChannel(kspChannelString string) (string, error) {
+	streamName, ok := strings.CutPrefix(kspChannelString, configs.KeySpacePrefix)
+	if !ok {
+		return "", fmt.Errorf("invalid ksp channel payload")
+	}
+
+	return streamName, nil
 }

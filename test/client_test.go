@@ -308,7 +308,7 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	var actualMutexKey string
 	for _, c := range grp.Consumers {
 		if c.Name == "redis-consumer-111" && len(c.Pending) > 0 {
-			actualMutexKey = fmt.Sprintf("__keyspace@0__:session0<MUTEX_KEY_SEP>%s", c.Pending[0].ID)
+			actualMutexKey = fmt.Sprintf("session0<MUTEX_KEY_SEP>%s", c.Pending[0].ID)
 			break
 		}
 	}
@@ -909,7 +909,12 @@ func createConsumer(name string, redisContainer *redis.RedisContainer, opts ...i
 	_ = os.Setenv("POD_NAME", name)
 	// create a new redis client
 	// always override config for tests
-	opts = append(opts, impl.WithForceConfigOverride(), impl.WithKspChanSize(500), impl.WithKspChanTimeout(2*time.Minute), impl.WithLBSRecoveryCount(500), impl.WithOutputChanSize(500))
+	opts = append(opts, impl.WithForceConfigOverride(),
+		impl.WithKspChanSize(500),
+		impl.WithKspChanTimeout(2*time.Minute),
+		impl.WithLBSRecoveryCount(500),
+		impl.WithOutputChanSize(500),
+		impl.WithMetricsRecorder(&testMetricsRecorder{}))
 	relredis, err := impl.NewRedisStreamClient(newRedisClient(redisContainer), "consumer", opts...)
 	if err != nil {
 		return nil
