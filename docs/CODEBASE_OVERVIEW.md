@@ -10,6 +10,7 @@ The client works alongside a **load balancer stream (LBS)** that distributes dat
 
 ## Code Layout
 
+- **`metrics/`** – Defines `Recorder` interface and default implementations (noop, test).  Enables instrumentation of client operations.
 - **`impl/`** – Implementation of the recoverable client.
 - **`impl/broker.go`** – NotificationBroker for unified output channel management.
 - **`notifs/`** – Notification types for LBS and keyspace events.
@@ -18,6 +19,10 @@ The client works alongside a **load balancer stream (LBS)** that distributes dat
 - **`imgs/`** – Diagrams referenced in the README.
 
 Key files to explore:
+
+*Examples*: a Prometheus recorder lives in `examples/prometheus/recorder.go` which demonstrates how the
+`metrics.Recorder` can be implemented for real‑world monitoring.
+
 
 1. **`types/types.go`** – Defines the `RedisStreamClient` interface with methods `Init`, `Claim`, `Done`, and `ID`.
 2. **`impl/relredis.go`** – Implements the interface through `RecoverableRedisStreamClient`, managing connections, locks, and notifications.

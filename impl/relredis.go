@@ -15,6 +15,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
+	"github.com/handcoding-labs/redis-stream-client-go/metrics"
 	"github.com/handcoding-labs/redis-stream-client-go/notifs"
 	"github.com/handcoding-labs/redis-stream-client-go/types"
 	"github.com/handcoding-labs/redis-stream-client-go/types/errs"
@@ -23,7 +24,7 @@ import (
 // StreamLocksInfo holds information needed to operation with data streams and their management for synchronization
 type StreamLocksInfo struct {
 	LBSInfo        notifs.LBSInfo
-	Mutex          *redsync.Mutex
+	RedsyncMutex   *redsync.Mutex
 	AdditionalInfo map[string]any
 }
 
@@ -34,7 +35,7 @@ type RecoverableRedisStreamClient struct {
 	// consumerID is the unique identifier for the consumer
 	consumerID string
 	// kspChan is the channel to read keyspace notifications
-	kspChan <-chan *redis.Message
+	kspChan chan *redis.Message
 	// lbsCtxCancelFunc is used to control when to kill go routines spawned as part of lbs
 	lbsCtxCancelFunc context.CancelFunc
 	// hbInterval is the interval at which the client sends heartbeats
@@ -73,6 +74,8 @@ type RecoverableRedisStreamClient struct {
 	initialRetryDelay time.Duration
 	// maxRetryDelay is the maximum delay between retries
 	maxRetryDelay time.Duration
+	// metricsRecorder is used to record metrics related to Redis mutex operations and stream processing
+	metricsRecorder metrics.Recorder
 }
 
 // NewRedisStreamClient creates a new RedisStreamClient
@@ -117,6 +120,7 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string,
 		maxRetries:        configs.DefaultMaxRetries,
 		initialRetryDelay: configs.DefaultInitialRetryDelay,
 		maxRetryDelay:     configs.DefaultMaxRetryDelay,
+		metricsRecorder:   &metrics.NoopRecorder{},
 	}
 
 	for _, opt := range opts {
@@ -179,6 +183,8 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs
 	r.logger.Info("claiming stream", "consumer_id", r.consumerID, "mutex_key", lbsInfo,
 		"timestamp", time.Now().Format(time.RFC3339))
 
+	start := time.Now()
+
 	// Claim the stream
 	res := r.redisClient.XClaim(ctx, &redis.XClaimArgs{
 		Stream:   r.lbsName(),
@@ -190,8 +196,10 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs
 
 	if err := res.Err(); err != nil {
 		r.logger.Error("error claiming stream", "error", res.Err(), "consumer_id", r.consumerID)
+		r.metricsRecorder.RecordClaimAttempt(lbsInfo.DataStreamName, false, time.Since(start))
 		return errs.NewRedisError(errs.OpClaimStream, err)
 	}
+	r.metricsRecorder.RecordClaimAttempt(lbsInfo.DataStreamName, true, time.Since(start))
 
 	claimed, err := res.Result()
 	if err != nil {
@@ -204,7 +212,7 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs
 		return errs.ErrAlreadyClaimed
 	}
 
-	mutex := r.rs.NewMutex(lbsInfo.FormMutexKey(),
+	redsyncMutex := r.rs.NewMutex(lbsInfo.FormMutexKey(),
 		redsync.WithExpiry(r.hbInterval),
 		redsync.WithFailFast(true),
 		redsync.WithRetryDelay(10*time.Millisecond),
@@ -214,9 +222,12 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs
 		}))
 
 	// lock once
-	if err := mutex.Lock(); err != nil {
+	start = time.Now()
+	if err := redsyncMutex.Lock(); err != nil {
+		r.metricsRecorder.RecordLockAcquisitionAttempt(lbsInfo.DataStreamName, false, time.Since(start))
 		return errs.NewMutexError(errs.OpLockMutex, err)
 	}
+	r.metricsRecorder.RecordLockAcquisitionAttempt(lbsInfo.DataStreamName, true, time.Since(start))
 
 	// Retrieve the original message to get AdditionalInfo
 	var additionalInfo map[string]any
@@ -230,7 +241,7 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs
 	}
 
 	go func() {
-		if err := r.startExtendingKey(ctx, mutex, lbsInfo, additionalInfo); err != nil {
+		if err := r.startExtendingKey(ctx, redsyncMutex, lbsInfo, additionalInfo); err != nil {
 			r.logger.Error("Error extending key", "error", err, "stream", lbsInfo.DataStreamName, "consumer_id", r.consumerID)
 		}
 	}()
@@ -239,7 +250,7 @@ func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs
 	r.streamLocksMutex.Lock()
 	r.streamLocks[lbsInfo.DataStreamName] = &StreamLocksInfo{
 		LBSInfo:        lbsInfo,
-		Mutex:          mutex,
+		RedsyncMutex:   redsyncMutex,
 		AdditionalInfo: additionalInfo,
 	}
 	r.streamLocksMutex.Unlock()
@@ -258,11 +269,13 @@ func (r *RecoverableRedisStreamClient) DoneStream(ctx context.Context, dataStrea
 	}
 
 	// unlock the stream
-	_, err = streamLocksInfo.Mutex.Unlock()
+	_, err = streamLocksInfo.RedsyncMutex.Unlock()
 	if err != nil && !errors.Is(errors.Unwrap(err), redsync.ErrLockAlreadyExpired) {
 		r.logger.Error("error unlocking stream", "error", err.Error())
+		r.metricsRecorder.RecordLockReleaseAttempt(dataStreamName, false)
 		return errs.NewMutexError(errs.OpUnlockMutex, err)
 	}
+	r.metricsRecorder.RecordLockReleaseAttempt(dataStreamName, true)
 
 	// Acknowledge the message
 	res := r.redisClient.XAck(ctx, r.lbsName(), r.lbsGroupName(), streamLocksInfo.LBSInfo.IDInLBS)
@@ -278,6 +291,7 @@ func (r *RecoverableRedisStreamClient) DoneStream(ctx context.Context, dataStrea
 		return errs.NewRedisError(errs.OpDelStream, res.Err())
 	}
 
+	r.metricsRecorder.RecordStreamProcessingEnd(dataStreamName, time.Now())
 	return nil
 }
 
