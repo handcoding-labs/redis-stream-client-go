@@ -73,7 +73,6 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) er
 		})
 
 		if err := xautoClaimRes.Err(); err != nil {
-			r.logger.Error("error while getting unacked messages", "error", err)
 			return errs.NewRedisError(errs.OpGetUnackedMessages, err)
 		}
 
@@ -101,7 +100,6 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) er
 	// boot up code and we're recovering messages and thus outputChan isn't technically
 	// available to client yet.
 	if err := r.processLBSMessages(ctx, streams, r.rs); err != nil {
-		r.logger.Error("fatal error while processing unacked messages", "error", err)
 		return errs.NewRedisError(errs.OpProcessLBSMessages, err)
 	}
 
