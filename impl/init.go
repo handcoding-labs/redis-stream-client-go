@@ -259,12 +259,6 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 			// if client is still interested or is coming back from a delay (GC pause etc) then inform about disowning of stream
 			r.notificationBroker.Send(ctx, notifs.Make(notifs.StreamDisowned, lbsInfo, additionalInfo))
 		}
-
-		// cleanup internal state
-		_, err := r.popStreamLocksInfo(lbsInfo.DataStreamName)
-		if err != nil {
-			slog.Warn("error cleaning up internal state", "error", err)
-		}
 	}()
 
 	for {
