@@ -14,6 +14,7 @@ Examples:
 Describe how reviewers can test this fix/feature.
 Ideally, think of how you would guide a beginner user of redis-stream-client-go to try out your change.
 Add screenshots, if applicable.
+Can ignore in case changes are not tangible to the user (e.g. refactoring PRs or dependency updates).
 -->
 
 ## Type of Change
