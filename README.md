@@ -504,7 +504,7 @@ go get github.com/handcoding-labs/redis-stream-client-go
 
 ## Requirements
 
-- Go 1.21+
+- Go 1.24.11+
 - Redis 6.0+ with keyspace notifications enabled (`notify-keyspace-events Ex`)
 - Environment variable: `POD_NAME` or `POD_IP`
 
