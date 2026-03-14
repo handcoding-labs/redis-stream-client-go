@@ -214,7 +214,7 @@ if activeStreamCount > maxStreams {
 }
 ```
 
-# usage
+# Usage
 
 Just import the library:
 
@@ -320,7 +320,7 @@ There are currently four types of notifications sent on `outputChan`:
 3. `StreamDisowned` - When a client gets stuck (not crashed) and thus automatically relinquishes ownership, another active client will claim it. When the old client comes back, it will fail to extend the lock and thus will be informed that it now doesn't own the stream. The old client should gracefully exit by calling `Done` API.
 4. `StreamTerminated` - Internal notification indicating the notification channel is closing, typically due to context cancellation or fatal errors. Contains additional info about the termination reason.
 
-# claiming
+# Claiming
 
 When you receive a `StreamExpired` notification, you can claim the expired stream using the LBSInfo from the notification payload:
 
@@ -338,11 +338,11 @@ case notifs.StreamExpired:
 
 An error in `Claim` indicates the client was not successful in claiming the stream as some other client got there before.
 
-# stream lifecycle management
+# Stream lifecycle management
 
 The library provides granular control over stream lifecycle:
 
-## processing individual streams
+## Processing individual streams
 
 After processing is done for a specific data stream, call `DoneStream` to mark the end of processing for that particular stream:
 
@@ -355,7 +355,7 @@ This method:
 - Acknowledges the message in the LBS stream
 - Cleans up internal state for that specific stream
 
-## client shutdown
+## Client shutdown
 
 When the client is shutting down completely, call `Done` to clean up all streams handled by the client:
 
