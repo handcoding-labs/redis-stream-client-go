@@ -2,7 +2,7 @@
 <!-- Brief description of changes - what, why... -->
 
 <!--
-Link an issue with the PR by using the "Closes" or "Fixes" keyword.
+If this PR closes an existing issue, link it using the "Closes" or "Fixes" keyword.
 Examples:
     Closes https://github.com/handcoding-labs/redis-stream-client-go/issues/25
     Closes #36
