@@ -510,4 +510,4 @@ go get github.com/handcoding-labs/redis-stream-client-go
 
 ## License
 
-LGPL-2.1
+[LGPL-2.1](https://github.com/handcoding-labs/redis-stream-client-go/blob/main/LICENSE)
