@@ -218,17 +218,17 @@ if activeStreamCount > maxStreams {
 
 Just import the library:
 
-```
+```bash
 go get https://github.com/handcoding-labs/redis-stream-client-go
 ```
 
 Create the client:
 
-```
+```go
 import rsc "github.com/handcoding-labs/redis-stream-client-go/impl"
 ```
 
-```
+```go
 client := rsc.NewRedisStreamClient(<go redis client>, <service_name>)
 ```
 
@@ -271,7 +271,7 @@ The consumer ID will be prefixed with `redis-consumer-` automatically.
 
 Initialize the client and use the LBC and Key space notification channel for tracking which data streams to read and which have expired respectively:
 
-```
+```go
 outputChan, err := client.Init(ctx)
 ```
 
@@ -346,7 +346,7 @@ The library provides granular control over stream lifecycle:
 
 After processing is done for a specific data stream, call `DoneStream` to mark the end of processing for that particular stream:
 
-```
+```go
 err := client.DoneStream(ctx, <data_stream_name>)
 ```
 
@@ -359,7 +359,7 @@ This method:
 
 When the client is shutting down completely, call `Done` to clean up all streams handled by the client:
 
-```
+```go
 err := client.Done()
 ```
 
@@ -367,7 +367,7 @@ This method calls `DoneStream` for all active streams and then performs addition
 
 Method `ID()` can be used to obtain client ID for logging purposes:
 
-```
+```go
 client.ID()
 ```
 
