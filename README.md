@@ -214,21 +214,21 @@ if activeStreamCount > maxStreams {
 }
 ```
 
-# usage
+# Usage
 
 Just import the library:
 
-```
+```bash
 go get https://github.com/handcoding-labs/redis-stream-client-go
 ```
 
 Create the client:
 
-```
+```go
 import rsc "github.com/handcoding-labs/redis-stream-client-go/impl"
 ```
 
-```
+```go
 client := rsc.NewRedisStreamClient(<go redis client>, <service_name>)
 ```
 
@@ -271,7 +271,7 @@ The consumer ID will be prefixed with `redis-consumer-` automatically.
 
 Initialize the client and use the LBC and Key space notification channel for tracking which data streams to read and which have expired respectively:
 
-```
+```go
 outputChan, err := client.Init(ctx)
 ```
 
@@ -320,7 +320,7 @@ There are currently four types of notifications sent on `outputChan`:
 3. `StreamDisowned` - When a client gets stuck (not crashed) and thus automatically relinquishes ownership, another active client will claim it. When the old client comes back, it will fail to extend the lock and thus will be informed that it now doesn't own the stream. The old client should gracefully exit by calling `Done` API.
 4. `StreamTerminated` - Internal notification indicating the notification channel is closing, typically due to context cancellation or fatal errors. Contains additional info about the termination reason.
 
-# claiming
+# Claiming
 
 When you receive a `StreamExpired` notification, you can claim the expired stream using the LBSInfo from the notification payload:
 
@@ -338,15 +338,15 @@ case notifs.StreamExpired:
 
 An error in `Claim` indicates the client was not successful in claiming the stream as some other client got there before.
 
-# stream lifecycle management
+# Stream lifecycle management
 
 The library provides granular control over stream lifecycle:
 
-## processing individual streams
+## Processing individual streams
 
 After processing is done for a specific data stream, call `DoneStream` to mark the end of processing for that particular stream:
 
-```
+```go
 err := client.DoneStream(ctx, <data_stream_name>)
 ```
 
@@ -355,11 +355,11 @@ This method:
 - Acknowledges the message in the LBS stream
 - Cleans up internal state for that specific stream
 
-## client shutdown
+## Client shutdown
 
 When the client is shutting down completely, call `Done` to clean up all streams handled by the client:
 
-```
+```go
 err := client.Done()
 ```
 
@@ -367,7 +367,7 @@ This method calls `DoneStream` for all active streams and then performs addition
 
 Method `ID()` can be used to obtain client ID for logging purposes:
 
-```
+```go
 client.ID()
 ```
 
@@ -504,10 +504,10 @@ go get github.com/handcoding-labs/redis-stream-client-go
 
 ## Requirements
 
-- Go 1.21+
+- Go 1.24.11+
 - Redis 6.0+ with keyspace notifications enabled (`notify-keyspace-events Ex`)
 - Environment variable: `POD_NAME` or `POD_IP`
 
 ## License
 
-LGPL-2.1
+[LGPL-2.1](https://github.com/handcoding-labs/redis-stream-client-go/blob/main/LICENSE)
