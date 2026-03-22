@@ -166,7 +166,7 @@ func (r *RecoverableRedisStreamClient) Init(ctx context.Context) (<-chan notifs.
 
 	// recovery of unacked LBS messages
 	if err := r.recoverUnackedLBS(newCtx); err != nil {
-		return nil, err
+		r.logger.Warn("error recovering unacked LBS messages, continuing startup", "error", err)
 	}
 
 	// start blocking read on LBS stream

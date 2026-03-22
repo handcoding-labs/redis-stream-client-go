@@ -978,6 +978,62 @@ func TestLoggerInjection(t *testing.T) {
 	require.True(t, found, "Expected log message not found in output")
 }
 
+func TestInitContinuesWhenRecoverUnackedLBSFails(t *testing.T) {
+	ctx := context.Background()
+	redisContainer := setupSuite(t)
+
+	redisClient := newRedisClient(redisContainer)
+
+	// Prepare an existing group with a malformed pending LBS message so recovery fails.
+	groupRes := redisClient.XGroupCreateMkStream(ctx, "consumer-input", "consumer-group", "$")
+	require.NoError(t, groupRes.Err())
+
+	msgID, err := redisClient.XAdd(ctx, &redisgo.XAddArgs{
+		Stream: "consumer-input",
+		Values: map[string]any{
+			configs.LBSInput: "not-json",
+		},
+	}).Result()
+	require.NoError(t, err)
+	require.NotEmpty(t, msgID)
+
+	readRes := redisClient.XReadGroup(ctx, &redisgo.XReadGroupArgs{
+		Group:    "consumer-group",
+		Consumer: "bootstrap-consumer",
+		Streams:  []string{"consumer-input", ">"},
+		Count:    1,
+		Block:    time.Second,
+	})
+	require.NoError(t, readRes.Err())
+	require.Len(t, readRes.Val(), 1)
+	require.Len(t, readRes.Val()[0].Messages, 1)
+
+	consumer := createConsumer(
+		"111",
+		redisContainer,
+	)
+	opChan, err := consumer.Init(ctx)
+	require.NoError(t, err, "init should continue even when unacked recovery fails")
+	require.NotNil(t, opChan)
+
+	// Verify startup continued by successfully processing a new valid stream.
+	addNStreamsToLBS(t, redisContainer, 1)
+
+	select {
+	case notif, ok := <-opChan:
+		require.True(t, ok)
+		require.Equal(t, notifs.StreamAdded, notif.Type)
+		require.Equal(t, "session0", notif.Payload.DataStreamName)
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for stream added notification")
+	}
+
+	err = consumer.Done(ctx)
+	require.NoError(t, err)
+	_, ok := <-opChan
+	require.False(t, ok)
+}
+
 func addNStreamsToLBS(t *testing.T, redisContainer *redis.RedisContainer, n int) {
 	stringify := func(name string, i int) string {
 		return fmt.Sprintf("%s%d", name, i)
