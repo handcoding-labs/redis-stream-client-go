@@ -602,11 +602,10 @@ func TestKspNotifsBulk(t *testing.T) {
 	require.Equal(t, totalExpected, totalActual)
 
 	// metrics: each consumer should have recorded exactly one startup recovery
-	for i := 0; i < totalConsumers; i++ {
-		rec := recs[i]
-		require.NotNil(t, rec)
-		require.Equal(t, 1, rec.StartupRecoveryCount(), "consumer %d startup count", i)
-	}
+	for i, rec := range recs[:totalConsumers] {
+                require.NotNil(t, rec)
+                require.Equal(t, 1, rec.StartupRecoveryCount(), "consumer %d startup count", i)
+        }
 }
 
 func TestXAckDelBehavior(t *testing.T) {
