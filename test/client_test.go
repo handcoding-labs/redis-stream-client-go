@@ -520,8 +520,7 @@ func TestKspNotifsBulk(t *testing.T) {
 	var outputChans []<-chan notifs.RecoverableRedisNotification
 
 	for i := 0; i < totalConsumers; i++ {
-		ctxWithCancel := context.TODO()
-		ctx, cancel := context.WithCancel(ctxWithCancel)
+                ctx, cancel := context.WithCancel(context.TODO())
 
 		// create consumer client
 		consumer, rec := createConsumer(fmt.Sprint(i), redisContainer)
