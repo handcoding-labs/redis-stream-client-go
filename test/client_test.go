@@ -520,7 +520,7 @@ func TestKspNotifsBulk(t *testing.T) {
 	var outputChans []<-chan notifs.RecoverableRedisNotification
 
 	for i := 0; i < totalConsumers; i++ {
-                ctx, cancel := context.WithCancel(context.TODO())
+		ctx, cancel := context.WithCancel(context.TODO())
 
 		// create consumer client
 		consumer, rec := createConsumer(fmt.Sprint(i), redisContainer)
@@ -601,10 +601,10 @@ func TestKspNotifsBulk(t *testing.T) {
 	require.Equal(t, totalExpected, totalActual)
 
 	// metrics: each consumer should have recorded exactly one startup recovery
-	for i, rec := range recs[:totalConsumers] {
-                require.NotNil(t, rec)
-                require.Equal(t, 1, rec.StartupRecoveryCount(), "consumer %d startup count", i)
-        }
+	for i, rec := range recs {
+		require.NotNil(t, rec)
+		require.Equal(t, 1, rec.StartupRecoveryCount(), "consumer %d startup count", i)
+	}
 }
 
 func TestXAckDelBehavior(t *testing.T) {
@@ -1008,7 +1008,7 @@ func TestInitContinuesWhenRecoverUnackedLBSFails(t *testing.T) {
 	require.Len(t, readRes.Val(), 1)
 	require.Len(t, readRes.Val()[0].Messages, 1)
 
-	consumer := createConsumer(
+	consumer, _ := createConsumer(
 		"111",
 		redisContainer,
 	)
