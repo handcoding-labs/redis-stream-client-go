@@ -1,0 +1,122 @@
+name: Bug Report
+description: Create a report to help us improve
+type: Bug
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please use this tracker only for **bug reports**.
+        For questions and general discussions, use [GitHub Discussions](https://github.com/handcoding-labs/redis-stream-client-go/discussions).
+        Before filing, please check [existing issues](https://github.com/handcoding-labs/redis-stream-client-go/issues) to avoid duplicates.
+
+  - type: dropdown
+    id: version
+    attributes:
+      label: Library version
+      description: The version from your `go.mod` or `go get` output.
+      options:
+        - "v0.3.5 (latest release)"
+        - "v0.3.4"
+        - "v0.3.3"
+        - "Other (please describe below)"
+        - "Latest main branch build / unreleased (please note commit below)"
+    validations:
+      required: true
+
+  - type: input
+    id: go_version
+    attributes:
+      label: Go version
+      placeholder: "e.g. go1.23.4"
+      description: Output of `go version`
+    validations:
+      required: true
+
+  - type: input
+    id: redis_version
+    attributes:
+      label: Redis version
+      placeholder: "e.g. 7.2.4"
+      description: Output of `redis-server --version`
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment environment
+      options:
+        - Kubernetes (POD_NAME set)
+        - Docker (POD_IP set)
+        - Local / bare metal
+        - Other (please describe below)
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: latest_check
+    attributes:
+      label: Checked against the latest release
+      description: Please verify the bug is present in the latest `main` build before filing.
+      options:
+        - label: I have tested with the latest `main` branch build and the issue persists.
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Client configuration
+      description: The options passed to `NewRedisStreamClient` (e.g. `WithLBSIdleTime`, `WithLBSRecoveryCount`).
+      placeholder: |
+        impl.NewRedisStreamClient(
+          redisClient,
+          "my-service",
+          impl.WithLBSIdleTime(30*time.Second),
+        )
+    validations:
+      required: false
+
+  - type: textarea
+    id: appendix
+    attributes:
+      label: Appendix
+      description: "Logs, Redis output (XPENDING, XINFO), stack traces, or other relevant context."
+      value: |
+        <details>
+        <summary>Log output</summary>
+        
+        ```
+        Paste an excerpt of your logs here
+        ```
+        
+        </details>
+      validations:
+        required: false
