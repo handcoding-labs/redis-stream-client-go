@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -523,7 +524,7 @@ func TestKspNotifsBulk(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.TODO())
 
 		// create consumer client
-		consumer, rec := createConsumer(fmt.Sprint(i), redisContainer)
+		consumer, rec := createConsumer(strconv.Itoa(i), redisContainer)
 		opChan, err := consumer.Init(ctx)
 		require.NoError(t, err)
 		outputChans = append(outputChans, opChan)

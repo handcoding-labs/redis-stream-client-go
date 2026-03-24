@@ -7,6 +7,7 @@
 package prometheusmetric
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -86,26 +87,26 @@ func NewPrometheusRecorder(reg prometheus.Registerer) *PrometheusRecorder {
 }
 
 func (p *PrometheusRecorder) RecordClaimAttempt(streamName string, success bool, duration time.Duration) {
-	p.claimTotal.WithLabelValues(streamName, boolToString(success)).Inc()
+	p.claimTotal.WithLabelValues(streamName, strconv.FormatBool(success)).Inc()
 	p.claimDurationSeconds.WithLabelValues(streamName).Observe(duration.Seconds())
 }
 
 func (p *PrometheusRecorder) RecordLockAcquisitionAttempt(streamName string, success bool, duration time.Duration) {
-	p.startupRecoveryTotal.WithLabelValues(boolToString(success)).Inc()
+	p.startupRecoveryTotal.WithLabelValues(strconv.FormatBool(success)).Inc()
 	p.startupRecoveryDurationSeconds.WithLabelValues(streamName).Observe(duration.Seconds())
 }
 
 func (p *PrometheusRecorder) RecordLockExtensionAttempt(streamName string, success bool) {
-	p.lockExtensionTotal.WithLabelValues(streamName, boolToString(success)).Inc()
+	p.lockExtensionTotal.WithLabelValues(streamName, strconv.FormatBool(success)).Inc()
 }
 
 func (p *PrometheusRecorder) RecordLockReleaseAttempt(streamName string, success bool) {
-	p.lockReleaseTotal.WithLabelValues(streamName, boolToString(success)).Inc()
+	p.lockReleaseTotal.WithLabelValues(streamName, strconv.FormatBool(success)).Inc()
 }
 
 // RecordStartupRecovery implements the interface method for startup recovery.
 func (p *PrometheusRecorder) RecordStartupRecovery(success bool, unackedCount int, duration time.Duration) {
-	p.startupRecoveryTotal.WithLabelValues(boolToString(success)).Inc()
+	p.startupRecoveryTotal.WithLabelValues(strconv.FormatBool(success)).Inc()
 	// also record duration (unackedCount not stored here)
 	p.startupRecoveryDurationSeconds.WithLabelValues("").Observe(duration.Seconds())
 }
@@ -132,11 +133,4 @@ func (p *PrometheusRecorder) RecordKspNotification(streamName string) {
 
 func (p *PrometheusRecorder) RecordKspNotificationDropped() {
 	p.kspNotificationDroppedTotal.Inc()
-}
-
-func boolToString(b bool) string {
-	if b {
-		return "true"
-	}
-	return "false"
 }
