@@ -41,6 +41,9 @@ func main() {
     redisClient.ConfigSet(ctx, "notify-keyspace-events", "Ex")
 
     // Create and initialize stream client
+    // (show metrics recorder integration)
+    // rec := prom.NewPrometheusRecorder(prometheus.DefaultRegisterer) // see examples/prometheus
+    // client, err := impl.NewRedisStreamClient(redisClient, "example-service", impl.WithMetricsRecorder(rec))
     client, err := impl.NewRedisStreamClient(redisClient, "example-service")
     if err != nil {
         slog.Error("could not initialize", "error", err.Error())
