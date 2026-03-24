@@ -1,5 +1,7 @@
 # redis-stream-client-go
 
+Interactive demo: https://gemini.google.com/share/999b256cffd3
+
 [![Go](https://github.com/handcoding-labs/redis-stream-client-go/actions/workflows/go.yml/badge.svg)](https://github.com/handcoding-labs/redis-stream-client-go/actions/workflows/go.yml) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/handcoding-labs/redis-stream-client-go/badge)](https://scorecard.dev/viewer/?uri=github.com/handcoding-labs/redis-stream-client-go)
 
 A Redis stream-based client with automatic failure recovery. Built on [go-redis](https://github.com/redis/go-redis) and [redsync](https://github.com/go-redsync/redsync).
@@ -33,7 +35,19 @@ for notification := range outputChan {
         go process(notification.Payload.DataStreamName)
     case notifs.StreamExpired:
         client.Claim(ctx, notification.Payload)
-```
+``` 
+
+## Metrics
+
+The client can emit detailed operational metrics via the `metrics.Recorder` interface.  Supply a
+recorder when creating the client with `impl.WithMetricsRecorder(...)`.  A Prometheus example is
+included under `examples/prometheus/` and full metric semantics are documented in
+[`docs/METRICS.md`](docs/METRICS.md).
+
+```go
+rec := prometheusmetric.NewPrometheusRecorder(prometheus.DefaultRegisterer)
+client, _ := impl.NewRedisStreamClient(redisClient, "my-service", impl.WithMetricsRecorder(rec))
+``````
 # Architecture
 
 ## Threading Model
