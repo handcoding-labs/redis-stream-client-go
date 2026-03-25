@@ -16,7 +16,7 @@ func FuzzExtractStreamnameFromKspChannel(f *testing.F) {
 
 	r := &RecoverableRedisStreamClient{}
 	f.Fuzz(func(t *testing.T, input string) {
-		_, _ = r.extractStreamnameFromKspChannel(input)
+		_, _ = r.extractStreamnameFromKspChannel(input) //nolint:errcheck
 	})
 }
 
@@ -35,6 +35,6 @@ func FuzzRetryConfigValidate(f *testing.F) {
 			InitialRetryDelay: time.Duration(initialDelayNs),
 			MaxRetryDelay:     time.Duration(maxDelayNs),
 		}
-		_ = rc.Validate()
+		_ = rc.Validate() //nolint:errcheck
 	})
 }
