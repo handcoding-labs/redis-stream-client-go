@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"time"
 
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
@@ -30,7 +29,7 @@ func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx 
 			if !r.forceOverrideConfig {
 				return errs.ErrExistingConfigWithoutOverride
 			} else {
-				slog.Warn("overriding existing keyspace notifications config since force override is set")
+				r.logger.Warn("overriding existing keyspace notifications config since force override is set")
 			}
 		}
 	}
@@ -258,6 +257,15 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 		if extensionFailed {
 			// if client is still interested or is coming back from a delay (GC pause etc) then inform about disowning of stream
 			r.notificationBroker.Send(ctx, notifs.Make(notifs.StreamDisowned, lbsInfo, additionalInfo))
+		}
+
+		// if stream processing is not finished at this point, pop stream to prevent
+		// the internal map from getting polluted.
+		if !r.isStreamProcessingDone(lbsInfo.DataStreamName) {
+			_, err := r.popStreamLocksInfo(lbsInfo.DataStreamName)
+			if err != nil {
+				r.logger.Warn("error cleaning up internal state", "error", err)
+			}
 		}
 	}()
 
