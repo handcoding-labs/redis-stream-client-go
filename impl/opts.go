@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
+	"github.com/handcoding-labs/redis-stream-client-go/metrics"
 	"github.com/handcoding-labs/redis-stream-client-go/notifs"
 	"github.com/handcoding-labs/redis-stream-client-go/types/errs"
 )
@@ -144,6 +145,15 @@ func WithRetryConfig(config RetryConfig) RecoverableRedisOption {
 func WithLogger(logger *slog.Logger) RecoverableRedisOption {
 	return func(r *RecoverableRedisStreamClient) error {
 		r.logger = logger
+		return nil
+	}
+}
+
+// WithMetricsRecorder allows clients to provide their own metrics recorder
+// implementation based on MetricsRecorder interface
+func WithMetricsRecorder(recorder metrics.Recorder) RecoverableRedisOption {
+	return func(r *RecoverableRedisStreamClient) error {
+		r.metricsRecorder = recorder
 		return nil
 	}
 }

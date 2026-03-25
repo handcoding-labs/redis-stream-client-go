@@ -44,11 +44,26 @@ func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx 
 
 func (r *RecoverableRedisStreamClient) subscribeToExpiredEvents(ctx context.Context) {
 	r.pubSub = r.redisClient.PSubscribe(ctx, configs.MutexKeySpacePattern)
-	r.kspChan = r.pubSub.Channel(
+	redisPubSubChan := r.pubSub.Channel(
 		redis.WithChannelHealthCheckInterval(5*time.Second),
 		redis.WithChannelSendTimeout(r.kspChanTimeout),
 		redis.WithChannelSize(r.kspChanSize),
 	)
+
+	// Wrap the redis pubsub channel with our own channel that has a timeout and proper logging
+	go func() {
+		for msg := range redisPubSubChan {
+			select {
+			case r.kspChan <- msg:
+				// message sent successfully to kspChan
+			default:
+				// kspChan is full or blocked, log the timeout and drop the message
+				r.logger.Warn("kspChan is full or blocked, dropping ksp notification",
+					"channel", msg.Channel, "payload", msg.Payload)
+				r.metricsRecorder.RecordKspNotificationDropped()
+			}
+		}
+	}()
 }
 
 // This method doesn't return error and just logs because we execute this
@@ -61,6 +76,8 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) er
 	// it means there is nothing more to claim or process
 	nextStart := ""
 	var unackedMessages []redis.XMessage
+	start := time.Now()
+
 	for nextStart != configs.StartIDPair {
 		xautoClaimRes := r.redisClient.XAutoClaim(ctx, &redis.XAutoClaimArgs{
 			Stream:   r.lbsName(),
@@ -72,6 +89,8 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) er
 		})
 
 		if err := xautoClaimRes.Err(); err != nil {
+			r.logger.Error("error while getting unacked messages", "error", err)
+			r.metricsRecorder.RecordStartupRecovery(false, len(unackedMessages), time.Since(start))
 			return errs.NewRedisError(errs.OpGetUnackedMessages, err)
 		}
 
@@ -99,8 +118,14 @@ func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) er
 	// boot up code and we're recovering messages and thus outputChan isn't technically
 	// available to client yet.
 	if err := r.processLBSMessages(ctx, streams, r.rs); err != nil {
+		r.logger.Error("fatal error while processing unacked messages", "error", err)
+		r.metricsRecorder.RecordStartupRecovery(false, len(unackedMessages), time.Since(start))
 		return errs.NewRedisError(errs.OpProcessLBSMessages, err)
 	}
+
+	r.metricsRecorder.RecordStartupRecovery(true, len(unackedMessages), time.Since(start))
+	r.logger.Info("successfully recovered unacked messages",
+		"count", len(unackedMessages), "duration_seconds", time.Since(start).Seconds())
 
 	return nil
 }
@@ -210,7 +235,7 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(
 			}
 
 			// create mutex
-			mutex := rs.NewMutex(lbsInfo.FormMutexKey(),
+			redsyncMutex := rs.NewMutex(lbsInfo.FormMutexKey(),
 				redsync.WithExpiry(r.hbInterval),
 				redsync.WithFailFast(true),
 				redsync.WithRetryDelay(10*time.Millisecond),
@@ -220,23 +245,27 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(
 				}))
 
 			// lock only once
-			if err := mutex.Lock(); err != nil {
+			start := time.Now()
+			if err := redsyncMutex.Lock(); err != nil {
+				r.metricsRecorder.RecordLockAcquisitionAttempt(lbsMessage.DataStreamName, false, time.Since(start))
 				return errs.NewMutexError(errs.OpLockMutex, err)
 			}
+			r.metricsRecorder.RecordLockAcquisitionAttempt(lbsMessage.DataStreamName, true, time.Since(start))
 
 			r.streamLocksMutex.Lock()
 			r.streamLocks[lbsInfo.DataStreamName] = &StreamLocksInfo{
 				LBSInfo:        lbsInfo,
-				Mutex:          mutex,
+				RedsyncMutex:   redsyncMutex,
 				AdditionalInfo: lbsMessage.Info,
 			}
 			r.streamLocksMutex.Unlock()
 
 			r.notificationBroker.Send(ctx, notifs.Make(notifs.StreamAdded, lbsInfo, lbsMessage.Info))
+			r.metricsRecorder.RecordStreamProcessingStart(lbsInfo.DataStreamName, time.Now())
 
 			// now, keep extending the lock in a separate go routine
 			go func() {
-				if err := r.startExtendingKey(ctx, mutex, lbsInfo, lbsMessage.Info); err != nil {
+				if err := r.startExtendingKey(ctx, redsyncMutex, lbsInfo, lbsMessage.Info); err != nil {
 					r.logger.Error("Error extending key", "error", err, "stream", lbsInfo.DataStreamName)
 				}
 			}()
@@ -248,7 +277,7 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(
 
 func (r *RecoverableRedisStreamClient) startExtendingKey(
 	ctx context.Context,
-	mutex *redsync.Mutex,
+	redsyncMutex *redsync.Mutex,
 	lbsInfo notifs.LBSInfo,
 	additionalInfo map[string]any,
 ) error {
@@ -283,10 +312,12 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 			return nil
 		}
 
-		if ok, err := mutex.Extend(); !ok || err != nil {
+		if ok, err := redsyncMutex.Extend(); !ok || err != nil {
 			extensionFailed = true
+			r.metricsRecorder.RecordLockExtensionAttempt(lbsInfo.DataStreamName, false)
 			return errs.NewMutexError(errs.OpExtendMutex, err)
 		}
+		r.metricsRecorder.RecordLockExtensionAttempt(lbsInfo.DataStreamName, true)
 
 		time.Sleep(r.hbInterval / 2)
 	}
@@ -301,7 +332,16 @@ func (r *RecoverableRedisStreamClient) listenKsp(ctx context.Context) {
 		case kspNotif := <-r.kspChan:
 			if kspNotif != nil {
 				r.logger.Debug("ksp notif received", "consumer_id", r.consumerID, "payload", kspNotif.Payload)
-				lbsInfo, err := notifs.CreateByKspNotification(kspNotif.Channel, kspNotif.Payload)
+				streamName, err := r.extractStreamnameFromKspChannel(kspNotif.Channel)
+				if err != nil {
+					r.logger.Warn("error extracting stream name from ksp channel", "ksp_channel", kspNotif.Channel, "error", err)
+					continue
+				}
+
+				// record the ksp notification metric
+				r.metricsRecorder.RecordKspNotification(streamName)
+
+				lbsInfo, err := notifs.CreateByKspNotification(streamName, kspNotif.Payload)
 				if err != nil {
 					r.logger.Warn("error parsing ksp notification", "ksp_notification", kspNotif)
 					continue
