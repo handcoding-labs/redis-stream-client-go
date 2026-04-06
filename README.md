@@ -23,6 +23,10 @@ This library provides:
 
 ![Redis stream client - LBS](./imgs/redis_stream_client_lbs.png)
 
+## Limitations
+
+**Redis consumer groups on a single stream are not supported.** Each data stream is exclusively owned by one consumer at a time. If you need multiple consumers reading from the same stream in parallel, use `XREADGROUP` / `XAUTOCLAIM` directly via [go-redis](https://github.com/redis/go-redis). See [this issue](https://github.com/handcoding-labs/redis-stream-client-go/issues/99) for planned support.
+
 ## Quick Start
 
 ```go
