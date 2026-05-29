@@ -47,14 +47,18 @@ func (r *RecoverableRedisStreamClient) reQueue(ctx context.Context, idInLBS stri
 	}
 	if values == nil {
 		// the entry no longer exists in the stream; clear any lingering PEL ownership and bail
-		_ = r.redisClient.XAck(ctx, r.lbsName(), r.lbsGroupName(), idInLBS).Err()
+		if ackErr := r.redisClient.XAck(ctx, r.lbsName(), r.lbsGroupName(), idInLBS).Err(); ackErr != nil {
+			r.logger.Warn("error acking already-removed LBS entry", "error", ackErr, "id_in_lbs", idInLBS)
+		}
 		return reQueueLostRace, "", nil
 	}
 
 	dataStreamName, err := dataStreamNameFromValues(values)
 	if err != nil {
 		// unparseable entry: ack to avoid an endless poison loop, then drop
-		_ = r.redisClient.XAck(ctx, r.lbsName(), r.lbsGroupName(), idInLBS).Err()
+		if ackErr := r.redisClient.XAck(ctx, r.lbsName(), r.lbsGroupName(), idInLBS).Err(); ackErr != nil {
+			r.logger.Warn("error acking unparseable LBS entry", "error", ackErr, "id_in_lbs", idInLBS)
+		}
 		r.logger.Warn("unparseable LBS entry during re-queue; acked and dropped",
 			"error", err, "id_in_lbs", idInLBS)
 		return reQueueLostRace, "", nil
@@ -82,8 +86,8 @@ func (r *RecoverableRedisStreamClient) reQueue(ctx context.Context, idInLBS stri
 
 	// Retries exhausted -> DLQ (or drop).
 	if next > r.recoveryConfig.MaxRetries {
-		out, err := r.routeToDLQ(ctx, dataStreamName, idInLBS, values, next)
-		return out, dataStreamName, err
+		out, dlqErr := r.routeToDLQ(ctx, dataStreamName, idInLBS, values, next)
+		return out, dataStreamName, dlqErr
 	}
 
 	// XACK-first dedup across concurrent recoverers.
@@ -172,7 +176,10 @@ func (r *RecoverableRedisStreamClient) routeToDLQ(
 
 // readLBSEntry fetches a single LBS stream entry by ID, returning its field/value map and the
 // parsed retry count. A nil map (with nil error) means the entry no longer exists.
-func (r *RecoverableRedisStreamClient) readLBSEntry(ctx context.Context, idInLBS string) (map[string]interface{}, int, error) {
+func (r *RecoverableRedisStreamClient) readLBSEntry(
+	ctx context.Context,
+	idInLBS string,
+) (map[string]interface{}, int, error) {
 	msgs, err := r.redisClient.XRange(ctx, r.lbsName(), idInLBS, idInLBS).Result()
 	if err != nil {
 		return nil, 0, errs.NewRedisError(errs.OpReQueue, err)
