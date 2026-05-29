@@ -12,9 +12,10 @@ The client works alongside a **load balancer stream (LBS)** that distributes dat
 
 - **`metrics/`** – Defines `Recorder` interface and default implementations (noop, test).  Enables instrumentation of client operations.
 - **`impl/`** – Implementation of the recoverable client.
-- **`impl/broker.go`** – NotificationBroker for unified output channel management.
+- **`notifs/broker.go`** – NotificationBroker for unified output channel management.
 - **`notifs/`** – Notification types for LBS and keyspace events.
-- **`types/`** – Constants and public interfaces.
+- **`configs/`** – Constants and tunable defaults.
+- **`types/`** – Public interfaces and error types (`types/errs`).
 - **`test/`** – Integration tests using Testcontainers and Redis.
 - **`imgs/`** – Diagrams referenced in the README.
 
@@ -24,13 +25,15 @@ Key files to explore:
 `metrics.Recorder` can be implemented for real‑world monitoring.
 
 
-1. **`types/types.go`** – Defines the `RedisStreamClient` interface with methods `Init`, `Claim`, `Done`, and `ID`.
-2. **`impl/relredis.go`** – Implements the interface through `RecoverableRedisStreamClient`, managing connections, locks, and notifications.
-3. **`impl/broker.go`** – Implements `NotificationBroker` for safe, synchronized notification delivery to the output channel.
-4. **`impl/init.go`** – Handles keyspace notification subscriptions and the LBS reading loop.
-5. **`notifs/relredisnotif.go`** – Defines notification structures such as `StreamAdded`, `StreamDisowned`, and `StreamExpired`, and the `LBSInputMessage` structure.
-6. **`notifs/lbsmsg.go`** – Contains `LBSInfo` structure and helper functions for managing LBS message metadata.
-7. **`test/client_test.go`** – Contains extensive integration tests demonstrating expected behaviors.
+1. **`types/types.go`** – Defines the `RedisStreamClient` interface with methods `Init`, `Claim`, `Done`, `DoneStream`, `ResetTopology`, and `ID`.
+2. **`impl/relredis.go`** – Implements the interface through `RecoverableRedisStreamClient`, managing connections, locks, notifications, `Claim` (re-queue) and `ResetTopology`.
+3. **`impl/opts.go`** – Functional options plus the `RecoveryConfig` and `ClusterMode` types.
+4. **`impl/init.go`** – Keyspace subscription (single-shard / all-masters), the LBS reading loop, and the periodic reconciliation scan (`runReconciliationLoop` / `reconcileLBS`).
+5. **`impl/helpers.go`** – The shared `reQueue` primitive (lock-liveness check, XACK-first dedup, XADD re-queue, DLQ routing) and retry-count/jitter helpers.
+6. **`notifs/broker.go`** – Implements `NotificationBroker` for safe, synchronized notification delivery to the output channel.
+7. **`notifs/relredisnotif.go`** – Defines notification structures such as `StreamAdded`, `StreamDisowned`, and `StreamExpired`, and the `LBSInputMessage` structure.
+8. **`notifs/lbsmsg.go`** – Contains `LBSInfo` structure and helper functions for managing LBS message metadata.
+9. **`test/client_test.go`** and **`test/cluster_test.go`** – Integration tests demonstrating expected behaviors, including recovery, dedup, DLQ routing, and cluster mode.
 
 ## Architecture
 
@@ -40,12 +43,13 @@ The library uses a multi-goroutine architecture:
 
 ```
 Per Client Instance:
-├── 1 × LBS Reader         - Blocking read on Load Balancer Stream
-├── 1 × Keyspace Listener  - Redis pub/sub for key expirations
-├── 1 × Notification Broker - Serializes notifications to output
-└── N × Key Extenders      - One per active stream (lock heartbeats)
+├── 1 × LBS Reader            - Blocking read on Load Balancer Stream
+├── 1 × Keyspace Listener     - Redis pub/sub for key expirations (one per master in OSS mode)
+├── 1 × Reconciliation Scanner - Periodic XPENDING scan that re-queues dead consumers' work
+├── 1 × Notification Broker   - Serializes notifications to output
+└── N × Key Extenders         - One per active stream (lock heartbeats)
 
-Total: 3 + N goroutines (where N = number of active streams)
+Total: 4 + N goroutines (where N = number of active streams; +1 per extra master in OSS mode)
 ```
 
 **Goroutine lifecycle:**
@@ -98,7 +102,7 @@ When consumer processing is slower than message arrival:
 |-----------|--------|-------------|
 | Base channels | ~300 KB | Fixed per client |
 | Per-stream overhead | ~2.5 KB | Active stream count |
-| Goroutine stacks | ~2 KB each | 3 + active streams |
+| Goroutine stacks | ~2 KB each | 4 + active streams |
 
 **Example:** 100 active streams ≈ 550 KB total memory
 
@@ -121,9 +125,9 @@ if errors.Is(err, rediserr.ErrStreamNotFound) {
 
 ## Next Steps for Learning
 
-- **Redis Streams & Consumer Groups** – Review commands like `XREADGROUP`, `XPENDING`, and `XCLAIM` to understand the underlying mechanisms.
-- **Distributed Locks with Redsync** – Look at `startExtendingKey` to see how the client maintains ownership via a distributed mutex.
-- **NotificationBroker Pattern** – Study `impl/broker.go` to understand how concurrent notification sources are synchronized.
+- **Redis Streams & Consumer Groups** – Review commands like `XREADGROUP`, `XPENDING`, `XACK`, and `XADD` to understand the underlying mechanisms (recovery re-queues via `XACK` + `XADD`).
+- **Distributed Locks with Redsync** – Look at `startExtendingKey` to see how the client maintains ownership via a distributed mutex, and `reQueue` for the lock-liveness check.
+- **NotificationBroker Pattern** – Study `notifs/broker.go` to understand how concurrent notification sources are synchronized.
 - **Run the Tests** – The tests under `test/` showcase how consumers coordinate and recover from failures.
 - **Environment Integration** – Set up environment variables such as `POD_NAME` or `POD_IP` to ensure unique consumer IDs.
 - **Read the Diagrams** – The diagrams in `imgs/` illustrate normal operation and recovery scenarios.

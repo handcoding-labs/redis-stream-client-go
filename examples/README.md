@@ -99,7 +99,9 @@ for notification := range outputChan {
         // New stream assigned to this consumer
         handleNewStream(notification.Payload)
     case notifs.StreamExpired:
-        // Another consumer failed, claim their stream
+        // Another consumer failed: re-queue its stream for redistribution. The recovered stream
+        // comes back as StreamAdded; do not process it here. (Optional — the periodic scan recovers
+        // it regardless.)
         client.Claim(ctx, notification.Payload)
     case notifs.StreamDisowned:
         // This consumer lost ownership
@@ -114,7 +116,7 @@ for notification := range outputChan {
 
 ### 3. **Cleanup**
 ```go
-defer client.Done()
+defer client.Done(ctx)
 ```
 
 The `Done()` method ensures all pending notifications are drained before the output channel is closed.

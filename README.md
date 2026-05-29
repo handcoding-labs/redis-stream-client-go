@@ -17,9 +17,10 @@ Other available consumers can't help because Redis is pull-based—they don't kn
 ## Solution
 
 This library provides:
-1. **Keyspace notifications** - Inform other consumers when a consumer dies or gets stuck
-2. **Claim API** - Allow any consumer to claim orphaned streams
-3. **Load Balancer Stream (LBS)** - Distribute streams across consumers via round-robin
+1. **Load Balancer Stream (LBS)** - Distribute streams across consumers via round-robin
+2. **Periodic reconciliation scan** - Recover work from dead consumers by re-queuing it (`XACK` + `XADD`), after verifying the owner's lock has actually expired (so slow-but-alive consumers are never disturbed)
+3. **Keyspace notifications** - A low-latency fast path that surfaces lock expirations as `StreamExpired`; calling `Claim` re-queues the orphaned stream for redistribution
+4. **Redis Cluster (OSS) support** - Subscribe to keyspace notifications on every master, with the scan as the authoritative, cluster-safe recovery mechanism
 
 ![Redis stream client - LBS](./imgs/redis_stream_client_lbs.png)
 
@@ -305,17 +306,28 @@ import "github.com/handcoding-labs/redis-stream-client-go/impl"
 
 // Create client with custom configuration
 client, err := impl.NewRedisStreamClient(
-    redisClient, 
+    redisClient,
     "my-service",
-    impl.WithLBSIdleTime(30*time.Second),        // Time before message considered idle (default: 40s)
-    impl.WithLBSRecoveryCount(500),              // Number of messages to recover at once (default: 1000)
+    impl.WithClusterMode(impl.ClusterModeSingleShard), // or ClusterModeOSS for Redis Cluster
+    impl.WithRecoveryConfig(impl.RecoveryConfig{
+        ReconciliationInterval: 60 * time.Second, // base period of the recovery scan (jitter added)
+        MinIdleTime:            30 * time.Second, // min idle before a pending message is recoverable
+        BatchSize:              50,               // max pending messages inspected per scan
+        MaxRetries:             3,                // re-queues before DLQ routing
+        DLQStream:              "my-service-dlq", // empty => drop after MaxRetries
+    }),
 )
 ```
 
 ### Available Options:
 
-- **`WithLBSIdleTime(duration)`**: Sets the time after which a message is considered idle and will be recovered by other consumers. Must be greater than 2 × heartbeat interval (4s minimum).
-- **`WithLBSRecoveryCount(count)`**: Sets the number of messages to fetch at a time during recovery operations.
+- **`WithClusterMode(mode)`**: Selects the recovery/keyspace strategy — `ClusterModeSingleShard` (default) or `ClusterModeOSS` (requires a `*redis.ClusterClient`). See [Cluster support](#cluster-support).
+- **`WithRecoveryConfig(config)`**: Tunes the periodic reconciliation scan (`ReconciliationInterval`, `MinIdleTime`, `BatchSize`, `MaxRetries`, `DLQStream`). Defaults: 60s / 30s / 50 / 3 / "".
+- **`WithRetryConfig(config)`**: Configures retry/backoff for transient LBS read errors.
+- **`WithLogger(logger)`**: Provide a custom `*slog.Logger`.
+- **`WithMetricsRecorder(recorder)`**: Provide a `metrics.Recorder` for instrumentation (see [docs/METRICS.md](docs/METRICS.md)).
+
+> **Deprecated:** `WithLBSIdleTime` and `WithLBSRecoveryCount` no longer affect recovery (now governed by `RecoveryConfig`) and will be removed in a future release. See [docs/MIGRATION.md](docs/MIGRATION.md).
 
 ## Environment Variables
 
@@ -380,27 +392,30 @@ There are currently four types of notifications sent on `outputChan`:
 1. `StreamAdded` - When a new stream gets added to LBS. You should take the stream and start reading your data from it using standard `XREAD` or `XREADGROUP` commands as applicable. The notification includes:
    - `Payload`: Contains `DataStreamName` and `IDInLBS`
    - `AdditionalInfo`: Contains the `Info` field from the original `LBSInputMessage`
-2. `StreamExpired` - When a client's ownership of stream expires and it relinquishes the lock. This is sent when key space notification arrives on stream expiry. Other clients should process this and take ownership of the stream by using `Claim` API.
+2. `StreamExpired` - Sent when a keyspace notification reports that a stream's lock has expired (its owner died or got stuck). Call the `Claim` API to recover it; this re-queues the stream for redistribution rather than granting ownership directly. Recovery also happens automatically via the periodic reconciliation scan, so handling `StreamExpired` is an optional low-latency optimization.
 3. `StreamDisowned` - When a client gets stuck (not crashed) and thus automatically relinquishes ownership, another active client will claim it. When the old client comes back, it will fail to extend the lock and thus will be informed that it now doesn't own the stream. The old client should gracefully exit by calling `Done` API.
 4. `StreamTerminated` - Internal notification indicating the notification channel is closing, typically due to context cancellation or fatal errors. Contains additional info about the termination reason.
 
 # Claiming
 
-When you receive a `StreamExpired` notification, you can claim the expired stream using the LBSInfo from the notification payload:
+When you receive a `StreamExpired` notification, call `Claim` to recover the expired stream. `Claim` acknowledges the dead consumer's pending message and re-adds it to the LBS as a new message (`XACK` + `XADD`). It does **not** grant ownership to the caller — the stream is redistributed normally and the consumer that picks it up (possibly this one) receives a `StreamAdded`. Process the stream then, not immediately after `Claim`.
 
 ```go
 case notifs.StreamExpired:
+    // Re-queue the expired stream for redistribution. Do NOT process here; wait for the
+    // StreamAdded that follows when the re-queued stream is picked up.
     if err := client.Claim(ctx, notification.Payload); err != nil {
-        // Handle claim failure - another consumer may have claimed it first
-        slog.Warn("Failed to claim expired stream", "error", err, "stream", notification.Payload.DataStreamName)
-    } else {
-        slog.Info("Successfully claimed expired stream", "stream", notification.Payload.DataStreamName)
-        // Process the claimed stream
-        go handleClaimedStream(ctx, notification.Payload.DataStreamName)
+        // ErrAlreadyClaimed means another consumer (or the reconciliation scan) already
+        // recovered it — this is expected and safe to ignore.
+        slog.Debug("stream already recovered by another consumer", "stream", notification.Payload.DataStreamName)
     }
+
+case notifs.StreamAdded:
+    // Ownership granted (whether a fresh stream or a recovered/re-queued one).
+    go handleStream(ctx, notification.Payload.DataStreamName)
 ```
 
-An error in `Claim` indicates the client was not successful in claiming the stream as some other client got there before.
+A non-nil error from `Claim` (`ErrAlreadyClaimed`) indicates another consumer or the periodic scan already recovered the stream.
 
 # Stream lifecycle management
 
@@ -424,7 +439,7 @@ This method:
 When the client is shutting down completely, call `Done` to clean up all streams handled by the client:
 
 ```go
-err := client.Done()
+err := client.Done(ctx)
 ```
 
 This method calls `DoneStream` for all active streams and then performs additional cleanup like closing channels and canceling contexts. The internal `NotificationBroker` ensures all pending notifications are drained before the output channel is closed.
@@ -495,15 +510,16 @@ func main() {
             switch notification.Type {
             case notifs.StreamAdded:
                 slog.Info("New stream assigned", "stream", notification.Payload.DataStreamName)
-                // Process the stream and call DoneStream when finished
+                // Process the stream and call DoneStream when finished. This fires both for fresh
+                // streams and for recovered (re-queued) ones.
                 go processStream(ctx, client, notification)
 
             case notifs.StreamExpired:
+                // Re-queue the expired stream for redistribution; processing happens later when the
+                // re-queued stream arrives as StreamAdded. Not handling this is also fine — the
+                // periodic reconciliation scan recovers it regardless.
                 if err := client.Claim(ctx, notification.Payload); err != nil {
-                    slog.Warn("Failed to claim stream", "error", err)
-                } else {
-                    slog.Info("Claimed expired stream", "stream", notification.Payload.DataStreamName)
-                    go processStream(ctx, client, notification)
+                    slog.Debug("stream already recovered elsewhere", "stream", notification.Payload.DataStreamName)
                 }
 
             case notifs.StreamDisowned:
@@ -520,7 +536,7 @@ func main() {
 
     // Wait for shutdown
     <-sigChan
-    client.Done()
+    client.Done(ctx)
 }
 
 func processStream(ctx context.Context, client types.RedisStreamClient, notification notifs.RecoverableRedisNotification) {

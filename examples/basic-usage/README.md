@@ -101,7 +101,8 @@ for notification := range outputChan {
         handleStreamAdded(ctx, notification)
         
     case notifs.StreamExpired:
-        // Claim stream from failed consumer
+        // Re-queue the failed consumer's stream for redistribution; it returns as StreamAdded.
+        // Do not process here. (Optional — the periodic reconciliation scan recovers it too.)
         client.Claim(ctx, notification.Payload)
         
     case notifs.StreamDisowned:
@@ -126,7 +127,7 @@ signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 <-sigChan
 
 // Clean up - this ensures all pending notifications are drained
-client.Done()
+client.Done(ctx)
 ```
 
 ## Key Concepts
@@ -146,7 +147,7 @@ client.Done()
 
 ### Notifications
 - **StreamAdded**: A new data stream has been assigned to this consumer
-- **StreamExpired**: Another consumer failed, and their stream is available to claim
+- **StreamExpired**: Another consumer's lock expired; call `Claim` to re-queue its stream for redistribution (it returns as `StreamAdded`). Optional — the periodic reconciliation scan recovers it regardless.
 - **StreamDisowned**: This consumer lost ownership of a stream (usually due to network issues)
 - **StreamTerminated**: The notification channel is closing (context cancelled or fatal error)
 

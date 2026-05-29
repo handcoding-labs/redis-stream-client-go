@@ -161,7 +161,20 @@ redis-cli INFO memory
 
 # Check keyspace notifications enabled
 redis-cli CONFIG GET notify-keyspace-events
+
+# Inspect the dead-letter stream (if RecoveryConfig.DLQStream is set)
+redis-cli XLEN my-service-dlq
+redis-cli XRANGE my-service-dlq - + COUNT 10
 ```
+
+**Recovery scan load:** each consumer issues one `XPENDING` per `ReconciliationInterval` (plus jitter)
+and an `EXISTS`/`XACK`/`XADD` per recoverable message. Increase `ReconciliationInterval` or lower
+`BatchSize` if scan load is significant on a shared Redis. Track recovery via the
+`RecordReconciliationScan` / `RecordReQueue` / `RecordDLQRouting` / `RecordMutexAliveSkip` metrics
+(see [METRICS.md](METRICS.md)).
+
+**ClusterModeOSS:** keyspace notifications and `XPENDING` scans run against every master; in OSS mode
+enable `notify-keyspace-events Ex` on all nodes and call `ResetTopology(ctx)` after failover/resharding.
 
 ### Alert Thresholds
 
@@ -217,12 +230,15 @@ redis-cli XINFO GROUPS my-service-input
 
 ### "Failed to claim expired stream" Errors
 
-**Expected behavior.** Multiple consumers race to claim expired streams. Only one wins.
+**Expected behavior.** `Claim` re-queues the expired stream (`XACK` + `XADD`); when multiple
+consumers (and the periodic reconciliation scan) race to recover the same stream, only one wins and
+the rest get `errs.ErrAlreadyClaimed`. Do not process the stream after `Claim` — wait for the
+`StreamAdded` that follows when the re-queued stream is picked up.
 
 Handle gracefully:
 ```go
 if err := client.Claim(ctx, notification.Payload); err != nil {
-    log.Debug("Another consumer claimed it first")
+    log.Debug("Another consumer (or the scan) recovered it first")
 }
 ```
 
@@ -254,7 +270,9 @@ redis-cli XTRIM my-service-input MAXLEN ~ 10000
 **Solutions:**
 - Implement timeouts in processing
 - Use context cancellation
-- Increase `WithLBSIdleTime` if processing legitimately slow
+- Increase `RecoveryConfig.MinIdleTime` if processing legitimately runs long (the lock-liveness
+  check already protects slow-but-alive consumers, but a larger `MinIdleTime` avoids unnecessary scan
+  work for long-running streams)
 
 ### Output Channel Closed Unexpectedly
 
