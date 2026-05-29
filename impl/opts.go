@@ -13,6 +13,73 @@ import (
 
 type RecoverableRedisOption func(*RecoverableRedisStreamClient) error
 
+// ClusterMode selects how the client subscribes to keyspace notifications and recovers work.
+type ClusterMode int
+
+const (
+	// ClusterModeSingleShard is the default. Keyspace notifications are subscribed to on the
+	// single (logical) shard the client is connected to. This is the historical behavior and is
+	// appropriate for a single Redis node, primary/replica, or Sentinel deployment.
+	ClusterModeSingleShard ClusterMode = iota
+	// ClusterModeOSS targets an OSS Redis Cluster. Keyspace notifications fire only on the shard
+	// owning the expiring key, so the client subscribes on every master node and relies on the
+	// periodic reconciliation scan as the authoritative, cluster-safe recovery mechanism. Requires
+	// the underlying client to be a *redis.ClusterClient.
+	ClusterModeOSS
+)
+
+// RecoveryConfig holds configuration for the periodic reconciliation scan that recovers
+// pending LBS messages whose owning consumer has died (cluster-safe XACK + XADD re-queue).
+type RecoveryConfig struct {
+	// ReconciliationInterval is the base period of the periodic recovery scan. Jitter is added
+	// on top of this to avoid synchronized scans ("thundering herd") across consumers.
+	ReconciliationInterval time.Duration
+
+	// MinIdleTime is the minimum time a pending message must have been idle before it is
+	// eligible for recovery. Should be comfortably larger than the heartbeat interval.
+	MinIdleTime time.Duration
+
+	// BatchSize is the maximum number of pending messages inspected per scan.
+	BatchSize int
+
+	// MaxRetries is the maximum number of times a message may be re-queued before it is routed
+	// to the DLQ (or dropped if no DLQ is configured). This is distinct from RetryConfig.MaxRetries
+	// which governs LBS read retries.
+	MaxRetries int
+
+	// DLQStream, if non-empty, is the name of the stream to which messages exceeding MaxRetries
+	// are routed. If empty, such messages are acknowledged and dropped.
+	DLQStream string
+}
+
+// DefaultRecoveryConfig returns the default recovery configuration.
+func DefaultRecoveryConfig() RecoveryConfig {
+	return RecoveryConfig{
+		ReconciliationInterval: configs.DefaultReconciliationInterval,
+		MinIdleTime:            configs.DefaultMinIdleTime,
+		BatchSize:              configs.DefaultReconciliationBatchSize,
+		MaxRetries:             configs.DefaultMaxReQueueRetries,
+		DLQStream:              "",
+	}
+}
+
+// Validate checks if the recovery configuration is valid.
+func (rc RecoveryConfig) Validate() error {
+	if rc.ReconciliationInterval <= 0 {
+		return fmt.Errorf("%w: reconciliationInterval must be greater than 0", errs.ErrInvalidRecoveryConfig)
+	}
+	if rc.MinIdleTime <= 0 {
+		return fmt.Errorf("%w: minIdleTime must be greater than 0", errs.ErrInvalidRecoveryConfig)
+	}
+	if rc.BatchSize <= 0 {
+		return fmt.Errorf("%w: batchSize must be greater than 0", errs.ErrInvalidRecoveryConfig)
+	}
+	if rc.MaxRetries < 0 {
+		return fmt.Errorf("%w: maxRetries must be >= 0", errs.ErrInvalidRecoveryConfig)
+	}
+	return nil
+}
+
 // RetryConfig holds all retry-related configuration
 type RetryConfig struct {
 	// MaxRetries is the maximum number of retry attempts
@@ -154,6 +221,29 @@ func WithLogger(logger *slog.Logger) RecoverableRedisOption {
 func WithMetricsRecorder(recorder metrics.Recorder) RecoverableRedisOption {
 	return func(r *RecoverableRedisStreamClient) error {
 		r.metricsRecorder = recorder
+		return nil
+	}
+}
+
+// WithRecoveryConfig configures the periodic reconciliation scan used to recover pending
+// LBS messages whose owning consumer has died.
+func WithRecoveryConfig(config RecoveryConfig) RecoverableRedisOption {
+	return func(r *RecoverableRedisStreamClient) error {
+		if err := config.Validate(); err != nil {
+			return err
+		}
+
+		r.recoveryConfig = config
+		return nil
+	}
+}
+
+// WithClusterMode selects the keyspace-notification and recovery strategy. Use ClusterModeOSS
+// when running against an OSS Redis Cluster; this requires the underlying client to be a
+// *redis.ClusterClient (validated at Init).
+func WithClusterMode(mode ClusterMode) RecoverableRedisOption {
+	return func(r *RecoverableRedisStreamClient) error {
+		r.clusterMode = mode
 		return nil
 	}
 }

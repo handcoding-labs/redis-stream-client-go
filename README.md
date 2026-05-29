@@ -23,6 +23,52 @@ This library provides:
 
 ![Redis stream client - LBS](./imgs/redis_stream_client_lbs.png)
 
+## Recovery model
+
+Recovery is handled by a **periodic reconciliation scan** plus the keyspace-notification fast path:
+
+- A background scan inspects the LBS group's pending entries (`XPENDING`) every
+  `ReconciliationInterval` (with jitter). For each entry idle longer than `MinIdleTime`, it checks
+  whether the owning consumer's **lock key still exists**:
+  - lock present → the consumer is alive (just slow), so the message is **left untouched** (this
+    prevents duplicate processing of slow consumers);
+  - lock absent → the consumer is dead, so the message is recovered by **acknowledging the original
+    and re-adding it as a new message** (`XACK` + `XADD`) for normal round-robin redistribution.
+- The XACK happens first, so when several consumers try to recover the same message, exactly one
+  wins and re-queues it.
+- Each re-queue increments a `_retry_count` field on the message. Once it exceeds `MaxRetries`, the
+  message is routed to the configured `DLQStream` (or dropped if none is set).
+
+This `XACK` + `XADD` approach replaces `XCLAIM`/`XAUTOCLAIM` and is safe across multiple Redis Cluster
+shards, where keyspace notifications alone are not broadcast cluster-wide.
+
+### Cluster support
+
+Select the mode with `impl.WithClusterMode(...)`:
+
+- `impl.ClusterModeSingleShard` (default) — single node, primary/replica, or Sentinel. Keyspace
+  notifications are subscribed to on the connected node.
+- `impl.ClusterModeOSS` — OSS Redis Cluster. Requires the underlying client to be a
+  `*redis.ClusterClient`. The client enables keyspace notifications and subscribes on **every
+  master**, and the reconciliation scan is the authoritative recovery mechanism. After a failover or
+  resharding, call `ResetTopology(ctx)` to reload the cluster view and rebuild subscriptions.
+
+```go
+client, _ := impl.NewRedisStreamClient(
+    clusterClient, "my-service",
+    impl.WithClusterMode(impl.ClusterModeOSS),
+    impl.WithRecoveryConfig(impl.RecoveryConfig{
+        ReconciliationInterval: 60 * time.Second,
+        MinIdleTime:            30 * time.Second,
+        BatchSize:              50,
+        MaxRetries:             3,
+        DLQStream:              "my-service-dlq",
+    }),
+)
+```
+
+> **Note:** the reconciliation scan uses `XPENDING ... IDLE`, which requires **Redis 6.2+**.
+
 ## Limitations
 
 **Redis consumer groups on a single stream are not supported.** Each data stream is exclusively owned by one consumer at a time. If you need multiple consumers reading from the same stream in parallel, use `XREADGROUP` / `XAUTOCLAIM` directly via [go-redis](https://github.com/redis/go-redis). See [this issue](https://github.com/handcoding-labs/redis-stream-client-go/issues/99) for planned support.

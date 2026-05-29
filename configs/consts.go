@@ -30,4 +30,23 @@ const (
 	DefaultMaxRetries               = 5
 	DefaultInitialRetryDelay        = 100 * time.Millisecond
 	DefaultMaxRetryDelay            = 30 * time.Second
+
+	// Reconciliation / recovery (cluster support)
+	// RetryCountField is the stream field that tracks how many times a message
+	// has been re-queued by the reconciliation scan or Claim.
+	RetryCountField = "_retry_count"
+	// DLQReasonField is the field added to messages routed to the DLQ stream.
+	DLQReasonField = "_dlq_reason"
+	// DLQReasonMaxRetries is the reason recorded when a message exceeds MaxRetries.
+	DLQReasonMaxRetries = "max_retries_exceeded"
+	// DefaultReconciliationInterval is the base period of the periodic recovery scan.
+	DefaultReconciliationInterval = 60 * time.Second
+	// DefaultMinIdleTime is the minimum idle time before a pending message is eligible for recovery.
+	DefaultMinIdleTime = 30 * time.Second
+	// DefaultReconciliationBatchSize is the max number of pending messages inspected per scan.
+	DefaultReconciliationBatchSize = 50
+	// DefaultMaxReQueueRetries is the default number of re-queue attempts before DLQ routing.
+	DefaultMaxReQueueRetries = 3
+	// DefaultJitterFraction is the fraction of the reconciliation interval used as random jitter.
+	DefaultJitterFraction = 0.1
 )

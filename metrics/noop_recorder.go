@@ -17,3 +17,10 @@ func (n *NoopRecorder) RecordStreamProcessingStart(streamName string, startTime 
 func (n *NoopRecorder) RecordStreamProcessingEnd(streamName string, startTime time.Time)   {}
 func (n *NoopRecorder) RecordKspNotification(streamName string)                            {}
 func (n *NoopRecorder) RecordKspNotificationDropped()                                      {}
+func (n *NoopRecorder) RecordReconciliationScan(requeued, skippedAlive, dlqRouted int, duration time.Duration) {
+}
+func (n *NoopRecorder) RecordReQueue(streamName string, success bool) {}
+func (n *NoopRecorder) RecordDLQRouting(streamName string)            {}
+func (n *NoopRecorder) RecordMutexAliveSkip(streamName string)        {}
+func (n *NoopRecorder) RecordAckAddGap(streamName string)             {}
+func (n *NoopRecorder) RecordTopologyReset(success bool)              {}

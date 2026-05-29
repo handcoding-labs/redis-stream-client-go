@@ -31,4 +31,10 @@ type RedisStreamClient interface {
 	//
 	// should be called when consumer is done processing a particular data stream.
 	DoneStream(ctx context.Context, dataStreamName string) error
+	// ResetTopology re-derives the cluster topology and re-establishes keyspace subscriptions.
+	//
+	// Only meaningful in ClusterModeOSS, where keyspace notifications fire per-master and the set
+	// of masters can change after failover/resharding. Callers should invoke this when they detect
+	// a topology change. It is a no-op in ClusterModeSingleShard.
+	ResetTopology(ctx context.Context) error
 }

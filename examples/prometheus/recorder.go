@@ -25,6 +25,16 @@ type PrometheusRecorder struct {
 	streamProcessingDurationSeconds *prometheus.HistogramVec
 	kspNotificationTotal            *prometheus.CounterVec
 	kspNotificationDroppedTotal     prometheus.Counter
+	reconciliationScanTotal         prometheus.Counter
+	reconciliationScanDuration      prometheus.Histogram
+	reconciliationRequeuedTotal     prometheus.Counter
+	reconciliationSkippedAliveTotal prometheus.Counter
+	reconciliationDLQRoutedTotal    prometheus.Counter
+	requeueTotal                    *prometheus.CounterVec
+	dlqRoutingTotal                 *prometheus.CounterVec
+	mutexAliveSkipTotal             *prometheus.CounterVec
+	ackAddGapTotal                  *prometheus.CounterVec
+	topologyResetTotal              *prometheus.CounterVec
 
 	// internal state
 	streamStarts map[string]time.Time
@@ -83,6 +93,57 @@ func NewPrometheusRecorder(reg prometheus.Registerer) *PrometheusRecorder {
 			Name: "redis_mutex_ksp_notification_dropped_total",
 			Help: "Total number of keyspace notifications dropped due to full broker channel.",
 		}),
+
+		reconciliationScanTotal: factory.NewCounter(prometheus.CounterOpts{
+			Name: "redis_reconciliation_scan_total",
+			Help: "Total number of periodic reconciliation scans performed.",
+		}),
+
+		reconciliationScanDuration: factory.NewHistogram(prometheus.HistogramOpts{
+			Name:    "redis_reconciliation_scan_duration_seconds",
+			Help:    "Duration of a reconciliation scan in seconds.",
+			Buckets: prometheus.DefBuckets,
+		}),
+
+		reconciliationRequeuedTotal: factory.NewCounter(prometheus.CounterOpts{
+			Name: "redis_reconciliation_requeued_total",
+			Help: "Total number of messages re-queued by reconciliation scans.",
+		}),
+
+		reconciliationSkippedAliveTotal: factory.NewCounter(prometheus.CounterOpts{
+			Name: "redis_reconciliation_skipped_alive_total",
+			Help: "Total number of messages skipped because their lock was still held by a live consumer.",
+		}),
+
+		reconciliationDLQRoutedTotal: factory.NewCounter(prometheus.CounterOpts{
+			Name: "redis_reconciliation_dlq_routed_total",
+			Help: "Total number of messages routed to the DLQ by reconciliation scans.",
+		}),
+
+		requeueTotal: factory.NewCounterVec(prometheus.CounterOpts{
+			Name: "redis_requeue_total",
+			Help: "Total number of re-queue attempts, labeled by stream and success.",
+		}, []string{"stream", "success"}),
+
+		dlqRoutingTotal: factory.NewCounterVec(prometheus.CounterOpts{
+			Name: "redis_dlq_routing_total",
+			Help: "Total number of messages routed to the DLQ, labeled by stream.",
+		}, []string{"stream"}),
+
+		mutexAliveSkipTotal: factory.NewCounterVec(prometheus.CounterOpts{
+			Name: "redis_mutex_alive_skip_total",
+			Help: "Total number of recovery skips because the lock key still exists, labeled by stream.",
+		}, []string{"stream"}),
+
+		ackAddGapTotal: factory.NewCounterVec(prometheus.CounterOpts{
+			Name: "redis_ack_add_gap_total",
+			Help: "Total number of XACK-succeeded-but-XADD-failed events, labeled by stream.",
+		}, []string{"stream"}),
+
+		topologyResetTotal: factory.NewCounterVec(prometheus.CounterOpts{
+			Name: "redis_topology_reset_total",
+			Help: "Total number of cluster topology resets, labeled by success.",
+		}, []string{"success"}),
 	}
 }
 
@@ -133,4 +194,32 @@ func (p *PrometheusRecorder) RecordKspNotification(streamName string) {
 
 func (p *PrometheusRecorder) RecordKspNotificationDropped() {
 	p.kspNotificationDroppedTotal.Inc()
+}
+
+func (p *PrometheusRecorder) RecordReconciliationScan(requeued, skippedAlive, dlqRouted int, duration time.Duration) {
+	p.reconciliationScanTotal.Inc()
+	p.reconciliationScanDuration.Observe(duration.Seconds())
+	p.reconciliationRequeuedTotal.Add(float64(requeued))
+	p.reconciliationSkippedAliveTotal.Add(float64(skippedAlive))
+	p.reconciliationDLQRoutedTotal.Add(float64(dlqRouted))
+}
+
+func (p *PrometheusRecorder) RecordReQueue(streamName string, success bool) {
+	p.requeueTotal.WithLabelValues(streamName, strconv.FormatBool(success)).Inc()
+}
+
+func (p *PrometheusRecorder) RecordDLQRouting(streamName string) {
+	p.dlqRoutingTotal.WithLabelValues(streamName).Inc()
+}
+
+func (p *PrometheusRecorder) RecordMutexAliveSkip(streamName string) {
+	p.mutexAliveSkipTotal.WithLabelValues(streamName).Inc()
+}
+
+func (p *PrometheusRecorder) RecordAckAddGap(streamName string) {
+	p.ackAddGapTotal.WithLabelValues(streamName).Inc()
+}
+
+func (p *PrometheusRecorder) RecordTopologyReset(success bool) {
+	p.topologyResetTotal.WithLabelValues(strconv.FormatBool(success)).Inc()
 }

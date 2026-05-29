@@ -2,7 +2,6 @@ package impl
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"os"
@@ -76,6 +75,14 @@ type RecoverableRedisStreamClient struct {
 	maxRetryDelay time.Duration
 	// metricsRecorder is used to record metrics related to Redis mutex operations and stream processing
 	metricsRecorder metrics.Recorder
+	// clusterMode selects the keyspace-notification and recovery strategy
+	clusterMode ClusterMode
+	// recoveryConfig configures the periodic reconciliation scan
+	recoveryConfig RecoveryConfig
+	// ossPubSubs holds the per-master keyspace subscriptions opened in ClusterModeOSS
+	ossPubSubs []*redis.PubSub
+	// ossPubSubMutex protects ossPubSubs from concurrent access (Init / ResetTopology)
+	ossPubSubMutex sync.Mutex
 }
 
 // NewRedisStreamClient creates a new RedisStreamClient
@@ -121,6 +128,8 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string,
 		initialRetryDelay: configs.DefaultInitialRetryDelay,
 		maxRetryDelay:     configs.DefaultMaxRetryDelay,
 		metricsRecorder:   &metrics.NoopRecorder{},
+		clusterMode:       ClusterModeSingleShard,
+		recoveryConfig:    DefaultRecoveryConfig(),
 	}
 
 	for _, opt := range opts {
@@ -147,6 +156,14 @@ func (r *RecoverableRedisStreamClient) ID() string {
 // Returns a channel to read messages from the LBS stream. The client should read from this channel and
 // process the messages.
 func (r *RecoverableRedisStreamClient) Init(ctx context.Context) (<-chan notifs.RecoverableRedisNotification, error) {
+	// ClusterModeOSS requires a cluster client so that we can subscribe to keyspace notifications
+	// on every master and reload topology on failover/resharding.
+	if r.clusterMode == ClusterModeOSS {
+		if _, ok := r.redisClient.(*redis.ClusterClient); !ok {
+			return nil, errs.ErrClusterClientRequired
+		}
+	}
+
 	keyspaceErr := r.enableKeyspaceNotifsForExpiredEvents(ctx)
 	if keyspaceErr != nil {
 		return nil, keyspaceErr
@@ -164,96 +181,44 @@ func (r *RecoverableRedisStreamClient) Init(ctx context.Context) (<-chan notifs.
 		return nil, errs.NewRedisError(errs.OpCreateLBSStream, err)
 	}
 
-	// recovery of unacked LBS messages
-	if err := r.recoverUnackedLBS(newCtx); err != nil {
-		r.logger.Warn("error recovering unacked LBS messages, continuing startup", "error", err)
-	}
-
 	// start blocking read on LBS stream
 	go r.readLBSStream(newCtx)
 
 	// listen to ksp chan
 	go r.listenKsp(newCtx)
 
+	// start the periodic reconciliation scan which recovers pending LBS messages whose owning
+	// consumer has died. The first pass runs immediately (replacing the old startup recovery).
+	go r.runReconciliationLoop(newCtx)
+
 	return r.outputChan, nil
 }
 
-// Claim claims pending messages from a stream
+// Claim recovers a data stream whose owning consumer is presumed dead.
+//
+// It is called by clients in response to a StreamExpired notification. Rather than taking direct
+// ownership via XCLAIM (which is not cluster-safe and bypasses the lock-liveness check), Claim
+// acknowledges the dead consumer's pending LBS message and re-adds the task as a brand-new message
+// (XACK + XADD) so it is redistributed normally through XREADGROUP. The consumer that subsequently
+// reads it — possibly this one — acquires the lock and receives a StreamAdded notification.
+//
+// Because the re-queue is gated on the XACK winning the race, concurrent Claim calls for the same
+// expired stream are de-duplicated: only one consumer re-adds the task. The others receive
+// ErrAlreadyClaimed.
 func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs.LBSInfo) error {
-	r.logger.Info("claiming stream", "consumer_id", r.consumerID, "mutex_key", lbsInfo,
-		"timestamp", time.Now().Format(time.RFC3339))
+	r.logger.Info("claiming stream via re-queue", "consumer_id", r.consumerID,
+		"mutex_key", lbsInfo.FormMutexKey(), "timestamp", time.Now().Format(time.RFC3339))
 
-	start := time.Now()
-
-	// Claim the stream
-	res := r.redisClient.XClaim(ctx, &redis.XClaimArgs{
-		Stream:   r.lbsName(),
-		Group:    r.lbsGroupName(),
-		Consumer: r.consumerID,
-		MinIdle:  r.hbInterval, // one heartbeat interval must have elapsed
-		Messages: []string{lbsInfo.IDInLBS},
-	})
-
-	if err := res.Err(); err != nil {
-		r.logger.Error("error claiming stream", "error", res.Err(), "consumer_id", r.consumerID)
-		r.metricsRecorder.RecordClaimAttempt(lbsInfo.DataStreamName, false, time.Since(start))
-		return errs.NewRedisError(errs.OpClaimStream, err)
-	}
-	r.metricsRecorder.RecordClaimAttempt(lbsInfo.DataStreamName, true, time.Since(start))
-
-	claimed, err := res.Result()
+	outcome, _, err := r.reQueue(ctx, lbsInfo.IDInLBS)
 	if err != nil {
-		r.logger.Error("error getting claimed stream", "error", err, "consumer_id", r.consumerID,
-			"mutex_key", lbsInfo.FormMutexKey())
-		return errs.NewRedisError(errs.OpReadClaimedStream, err)
+		return err
 	}
 
-	if len(claimed) == 0 {
+	// If we did not win the XACK race (someone else already recovered it) or the lock is still
+	// held by a live consumer, there is nothing for this caller to do.
+	if outcome != reQueueRequeued && outcome != reQueueDLQ {
 		return errs.ErrAlreadyClaimed
 	}
-
-	redsyncMutex := r.rs.NewMutex(lbsInfo.FormMutexKey(),
-		redsync.WithExpiry(r.hbInterval),
-		redsync.WithFailFast(true),
-		redsync.WithRetryDelay(10*time.Millisecond),
-		redsync.WithSetNXOnExtend(),
-		redsync.WithGenValueFunc(func() (string, error) {
-			return r.consumerID, nil
-		}))
-
-	// lock once
-	start = time.Now()
-	if err := redsyncMutex.Lock(); err != nil {
-		r.metricsRecorder.RecordLockAcquisitionAttempt(lbsInfo.DataStreamName, false, time.Since(start))
-		return errs.NewMutexError(errs.OpLockMutex, err)
-	}
-	r.metricsRecorder.RecordLockAcquisitionAttempt(lbsInfo.DataStreamName, true, time.Since(start))
-
-	// Retrieve the original message to get AdditionalInfo
-	var additionalInfo map[string]any
-	if len(claimed) > 0 {
-		if lbsInputStr, ok := claimed[0].Values[configs.LBSInput].(string); ok {
-			var lbsMessage notifs.LBSInputMessage
-			if err := json.Unmarshal([]byte(lbsInputStr), &lbsMessage); err == nil {
-				additionalInfo = lbsMessage.Info
-			}
-		}
-	}
-
-	go func() {
-		if err := r.startExtendingKey(ctx, redsyncMutex, lbsInfo, additionalInfo); err != nil {
-			r.logger.Error("Error extending key", "error", err, "stream", lbsInfo.DataStreamName, "consumer_id", r.consumerID)
-		}
-	}()
-
-	// populate StreamLocks info
-	r.streamLocksMutex.Lock()
-	r.streamLocks[lbsInfo.DataStreamName] = &StreamLocksInfo{
-		LBSInfo:        lbsInfo,
-		RedsyncMutex:   redsyncMutex,
-		AdditionalInfo: additionalInfo,
-	}
-	r.streamLocksMutex.Unlock()
 
 	return nil
 }
@@ -321,4 +286,52 @@ func (r *RecoverableRedisStreamClient) Done(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// ResetTopology re-derives the cluster topology and re-establishes keyspace subscriptions.
+//
+// In ClusterModeOSS, keyspace notifications fire only on the master that owns the expiring key, so
+// the client subscribes to every master. After a failover or resharding the set of masters changes;
+// callers should invoke ResetTopology to reload the cluster state and re-subscribe to the current
+// masters. In ClusterModeSingleShard this is a no-op.
+func (r *RecoverableRedisStreamClient) ResetTopology(ctx context.Context) error {
+	if r.clusterMode != ClusterModeOSS {
+		return nil
+	}
+
+	cluster, ok := r.redisClient.(*redis.ClusterClient)
+	if !ok {
+		r.metricsRecorder.RecordTopologyReset(false)
+		return errs.ErrClusterClientRequired
+	}
+
+	// reload the cluster's view of the topology (failover / resharding)
+	cluster.ReloadState(ctx)
+
+	// re-enable keyspace notifications on (possibly new) masters
+	if err := r.enableKeyspaceNotifsForExpiredEvents(ctx); err != nil {
+		r.metricsRecorder.RecordTopologyReset(false)
+		return err
+	}
+
+	// tear down existing per-master subscriptions and re-subscribe to the current masters
+	r.closeOSSPubSubs()
+	r.subscribeToExpiredEvents(ctx)
+
+	r.metricsRecorder.RecordTopologyReset(true)
+	r.logger.Info("cluster topology reset and keyspace subscriptions rebuilt", "consumer_id", r.consumerID)
+	return nil
+}
+
+// closeOSSPubSubs closes any per-master keyspace subscriptions opened in ClusterModeOSS.
+func (r *RecoverableRedisStreamClient) closeOSSPubSubs() {
+	r.ossPubSubMutex.Lock()
+	defer r.ossPubSubMutex.Unlock()
+
+	for _, ps := range r.ossPubSubs {
+		if err := ps.Close(); err != nil {
+			r.logger.Warn("error closing OSS keyspace subscription", "error", err)
+		}
+	}
+	r.ossPubSubs = nil
 }
