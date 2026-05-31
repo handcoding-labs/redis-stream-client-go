@@ -45,7 +45,10 @@ func (o *ossSubscriptions) closeAll(logger *slog.Logger) {
 // metric rather than aborting the whole sweep, since the periodic reconciliation scan is the
 // authoritative recovery path. A deterministic misconfiguration (existing config without force
 // override) is fatal and aborts immediately, as is the case where every master fails.
-func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsOnMasters(ctx context.Context, cluster *redis.ClusterClient) error {
+func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsOnMasters(
+	ctx context.Context,
+	cluster *redis.ClusterClient,
+) error {
 	var (
 		mu        sync.Mutex
 		succeeded int
