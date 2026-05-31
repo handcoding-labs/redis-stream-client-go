@@ -44,4 +44,8 @@ type Recorder interface {
 	// RecordTopologyReset records an attempt to reset the cluster topology and re-subscribe to
 	// keyspace notifications (ClusterModeOSS only).
 	RecordTopologyReset(success bool)
+	// RecordMasterKeyspaceSetup records the per-master outcome of enabling keyspace notifications
+	// across the cluster (ClusterModeOSS only). It makes partial failures — where some masters are
+	// configured and others are not — observable.
+	RecordMasterKeyspaceSetup(success bool)
 }

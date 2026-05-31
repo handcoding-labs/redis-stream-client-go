@@ -30,8 +30,10 @@ const (
 	DefaultMaxRetries               = 5
 	DefaultInitialRetryDelay        = 100 * time.Millisecond
 	DefaultMaxRetryDelay            = 30 * time.Second
+)
 
-	// Reconciliation / recovery (cluster support)
+// Reconciliation / recovery stream field names and DLQ markers (cluster support).
+const (
 	// RetryCountField is the stream field that tracks how many times a message
 	// has been re-queued by the reconciliation scan or Claim.
 	RetryCountField = "_retry_count"
@@ -39,6 +41,16 @@ const (
 	DLQReasonField = "_dlq_reason"
 	// DLQReasonMaxRetries is the reason recorded when a message exceeds MaxRetries.
 	DLQReasonMaxRetries = "max_retries_exceeded"
+	// DLQReasonUnparseable is the reason recorded when a message cannot be parsed into a valid LBS
+	// message and is therefore routed to the DLQ for inspection rather than retried.
+	DLQReasonUnparseable = "unparseable"
+	// DLQSuffix is appended to the LBS stream name to form the default DLQ stream name when the
+	// caller does not configure one explicitly.
+	DLQSuffix = "-dlq"
+)
+
+// Reconciliation / recovery default tunables (cluster support).
+const (
 	// DefaultReconciliationInterval is the base period of the periodic recovery scan.
 	DefaultReconciliationInterval = 60 * time.Second
 	// DefaultMinIdleTime is the minimum idle time before a pending message is eligible for recovery.

@@ -79,10 +79,8 @@ type RecoverableRedisStreamClient struct {
 	clusterMode ClusterMode
 	// recoveryConfig configures the periodic reconciliation scan
 	recoveryConfig RecoveryConfig
-	// ossPubSubs holds the per-master keyspace subscriptions opened in ClusterModeOSS
-	ossPubSubs []*redis.PubSub
-	// ossPubSubMutex protects ossPubSubs from concurrent access (Init / ResetTopology)
-	ossPubSubMutex sync.Mutex
+	// oss holds the per-master keyspace subscriptions opened in ClusterModeOSS
+	oss ossSubscriptions
 }
 
 // NewRedisStreamClient creates a new RedisStreamClient
@@ -136,6 +134,13 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string,
 		if err := opt(r); err != nil {
 			return nil, err
 		}
+	}
+
+	// Default the DLQ stream to a per-service name when the caller did not configure one, so that
+	// poison messages (those exceeding MaxRetries) are preserved on a dedicated stream rather than
+	// dropped. The DLQ lives on the same logical keyspace as the LBS stream.
+	if r.recoveryConfig.DLQStream == "" {
+		r.recoveryConfig.DLQStream = r.lbsName() + configs.DLQSuffix
 	}
 
 	// init the notification broker
@@ -315,23 +320,10 @@ func (r *RecoverableRedisStreamClient) ResetTopology(ctx context.Context) error 
 	}
 
 	// tear down existing per-master subscriptions and re-subscribe to the current masters
-	r.closeOSSPubSubs()
+	r.oss.closeAll(r.logger)
 	r.subscribeToExpiredEvents(ctx)
 
 	r.metricsRecorder.RecordTopologyReset(true)
 	r.logger.Info("cluster topology reset and keyspace subscriptions rebuilt", "consumer_id", r.consumerID)
 	return nil
-}
-
-// closeOSSPubSubs closes any per-master keyspace subscriptions opened in ClusterModeOSS.
-func (r *RecoverableRedisStreamClient) closeOSSPubSubs() {
-	r.ossPubSubMutex.Lock()
-	defer r.ossPubSubMutex.Unlock()
-
-	for _, ps := range r.ossPubSubs {
-		if err := ps.Close(); err != nil {
-			r.logger.Warn("error closing OSS keyspace subscription", "error", err)
-		}
-	}
-	r.ossPubSubs = nil
 }

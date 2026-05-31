@@ -12,6 +12,8 @@ var (
 	ErrPodConfigMissing      = errors.New("pod name or pod IP is missing")
 	ErrInvalidRecoveryConfig = errors.New("invalid recovery config")
 	ErrClusterClientRequired = errors.New("ClusterModeOSS requires a *redis.ClusterClient")
+
+	ErrKeyspaceNotifsAllMastersFailed = errors.New("failed to enable keyspace notifications on every master")
 )
 
 // Input validation

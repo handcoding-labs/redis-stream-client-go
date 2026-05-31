@@ -27,6 +27,9 @@ type testMetricsRecorder struct {
 	mutexAliveSkipCount     int
 	ackAddGapCount          int
 	topologyResetCount      int
+
+	masterKeyspaceSetupSuccess int
+	masterKeyspaceSetupFailure int
 }
 
 func (t *testMetricsRecorder) RecordStartupRecovery(success bool, unackedCount int, duration time.Duration) {
@@ -126,6 +129,16 @@ func (t *testMetricsRecorder) RecordTopologyReset(success bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.topologyResetCount++
+}
+
+func (t *testMetricsRecorder) RecordMasterKeyspaceSetup(success bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if success {
+		t.masterKeyspaceSetupSuccess++
+	} else {
+		t.masterKeyspaceSetupFailure++
+	}
 }
 
 // Getter methods to support assertions in tests
@@ -241,4 +254,16 @@ func (t *testMetricsRecorder) TopologyResetCount() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.topologyResetCount
+}
+
+func (t *testMetricsRecorder) MasterKeyspaceSetupSuccessCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.masterKeyspaceSetupSuccess
+}
+
+func (t *testMetricsRecorder) MasterKeyspaceSetupFailureCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.masterKeyspaceSetupFailure
 }

@@ -25,9 +25,7 @@ func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx 
 		if !ok {
 			return errs.ErrClusterClientRequired
 		}
-		return cluster.ForEachMaster(ctx, func(ctx context.Context, master *redis.Client) error {
-			return r.enableKeyspaceNotifsOn(ctx, master)
-		})
+		return r.enableKeyspaceNotifsOnMasters(ctx, cluster)
 	}
 
 	return r.enableKeyspaceNotifsOn(ctx, r.redisClient)
@@ -70,31 +68,6 @@ func (r *RecoverableRedisStreamClient) subscribeToExpiredEvents(ctx context.Cont
 
 	r.pubSub = r.redisClient.PSubscribe(ctx, configs.MutexKeySpacePattern)
 	r.fanInPubSub(r.pubSub)
-}
-
-// subscribeToExpiredEventsOSS opens a keyspace subscription on every master node and tracks the
-// subscriptions so they can be torn down and rebuilt by ResetTopology.
-func (r *RecoverableRedisStreamClient) subscribeToExpiredEventsOSS(ctx context.Context) {
-	cluster, ok := r.redisClient.(*redis.ClusterClient)
-	if !ok {
-		r.logger.Error("ClusterModeOSS requires a *redis.ClusterClient; skipping keyspace subscription")
-		return
-	}
-
-	// ForEachMaster runs the callback concurrently, so guard shared state with the mutex.
-	err := cluster.ForEachMaster(ctx, func(ctx context.Context, master *redis.Client) error {
-		ps := master.PSubscribe(ctx, configs.MutexKeySpacePattern)
-
-		r.ossPubSubMutex.Lock()
-		r.ossPubSubs = append(r.ossPubSubs, ps)
-		r.ossPubSubMutex.Unlock()
-
-		r.fanInPubSub(ps)
-		return nil
-	})
-	if err != nil {
-		r.logger.Error("error subscribing to keyspace notifications on masters", "error", err)
-	}
 }
 
 // fanInPubSub relays messages from a single pub/sub subscription into the shared kspChan, dropping

@@ -35,6 +35,7 @@ type PrometheusRecorder struct {
 	mutexAliveSkipTotal             *prometheus.CounterVec
 	ackAddGapTotal                  *prometheus.CounterVec
 	topologyResetTotal              *prometheus.CounterVec
+	masterKeyspaceSetupTotal        *prometheus.CounterVec
 
 	// internal state
 	streamStarts map[string]time.Time
@@ -144,6 +145,11 @@ func NewPrometheusRecorder(reg prometheus.Registerer) *PrometheusRecorder {
 			Name: "redis_topology_reset_total",
 			Help: "Total number of cluster topology resets, labeled by success.",
 		}, []string{"success"}),
+
+		masterKeyspaceSetupTotal: factory.NewCounterVec(prometheus.CounterOpts{
+			Name: "redis_master_keyspace_setup_total",
+			Help: "Total number of per-master keyspace-notification setup attempts (ClusterModeOSS), labeled by success.",
+		}, []string{"success"}),
 	}
 }
 
@@ -222,4 +228,8 @@ func (p *PrometheusRecorder) RecordAckAddGap(streamName string) {
 
 func (p *PrometheusRecorder) RecordTopologyReset(success bool) {
 	p.topologyResetTotal.WithLabelValues(strconv.FormatBool(success)).Inc()
+}
+
+func (p *PrometheusRecorder) RecordMasterKeyspaceSetup(success bool) {
+	p.masterKeyspaceSetupTotal.WithLabelValues(strconv.FormatBool(success)).Inc()
 }

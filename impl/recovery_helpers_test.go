@@ -23,8 +23,8 @@ func TestParseRetryCount(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := parseRetryCount(tc.values); got != tc.want {
-				t.Fatalf("parseRetryCount(%v) = %d, want %d", tc.values, got, tc.want)
+			if got := (lbsEntry{values: tc.values}).retryCount(); got != tc.want {
+				t.Fatalf("retryCount(%v) = %d, want %d", tc.values, got, tc.want)
 			}
 		})
 	}
@@ -36,7 +36,7 @@ func TestCloneValuesIsIndependentCopy(t *testing.T) {
 		configs.RetryCountField: "1",
 	}
 
-	clone := cloneValues(orig)
+	clone := (lbsEntry{values: orig}).cloneValues()
 	clone[configs.RetryCountField] = "2"
 	clone["new"] = "v"
 
@@ -53,9 +53,9 @@ func TestCloneValuesIsIndependentCopy(t *testing.T) {
 
 func TestDataStreamNameFromValues(t *testing.T) {
 	t.Run("valid", func(t *testing.T) {
-		name, err := dataStreamNameFromValues(map[string]interface{}{
+		name, err := (lbsEntry{values: map[string]interface{}{
 			configs.LBSInput: `{"DataStreamName":"stream-42","Info":{"k":"v"}}`,
-		})
+		}}).dataStreamName()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -65,23 +65,23 @@ func TestDataStreamNameFromValues(t *testing.T) {
 	})
 
 	t.Run("missing lbs-input key", func(t *testing.T) {
-		if _, err := dataStreamNameFromValues(map[string]interface{}{"other": "x"}); err == nil {
+		if _, err := (lbsEntry{values: map[string]interface{}{"other": "x"}}).dataStreamName(); err == nil {
 			t.Fatal("expected error for missing lbs-input field")
 		}
 	})
 
 	t.Run("empty data stream name", func(t *testing.T) {
-		if _, err := dataStreamNameFromValues(map[string]interface{}{
+		if _, err := (lbsEntry{values: map[string]interface{}{
 			configs.LBSInput: `{"DataStreamName":""}`,
-		}); err == nil {
+		}}).dataStreamName(); err == nil {
 			t.Fatal("expected error for empty data stream name")
 		}
 	})
 
 	t.Run("malformed json", func(t *testing.T) {
-		if _, err := dataStreamNameFromValues(map[string]interface{}{
+		if _, err := (lbsEntry{values: map[string]interface{}{
 			configs.LBSInput: `{not-json`,
-		}); err == nil {
+		}}).dataStreamName(); err == nil {
 			t.Fatal("expected error for malformed json")
 		}
 	})
