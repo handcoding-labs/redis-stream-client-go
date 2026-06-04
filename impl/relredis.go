@@ -238,20 +238,16 @@ func (r *RecoverableRedisStreamClient) DoneStream(ctx context.Context, dataStrea
 		return err
 	}
 
-	// unlock the stream
-	_, err = streamLocksInfo.RedsyncMutex.Unlock()
-	if err != nil && !errors.Is(errors.Unwrap(err), redsync.ErrLockAlreadyExpired) {
-		r.logger.Error("error unlocking stream", "error", err.Error())
-		r.metricsRecorder.RecordLockReleaseAttempt(dataStreamName, false)
-		return errs.NewMutexError(errs.OpUnlockMutex, err)
-	}
-	r.metricsRecorder.RecordLockReleaseAttempt(dataStreamName, true)
-
-	// Acknowledge the message
+	// Acknowledge and delete the LBS message BEFORE releasing the lock. Unlocking first would open a
+	// duplicate-processing race with the reconciliation scan: in the window between unlock and XACK
+	// the lock is gone but the entry is still in the PEL, so a concurrent reconcileLBS would see "no
+	// lock => owner dead" and re-queue a stream that just finished. XACK removes the entry from the
+	// PEL, so once it succeeds the scan can no longer see it regardless of lock state; until then the
+	// lock is still held, so the scan treats the owner as alive and skips it.
 	res := r.redisClient.XAck(ctx, r.lbsName(), r.lbsGroupName(), streamLocksInfo.LBSInfo.IDInLBS)
 	if res.Err() != nil {
 		r.logger.Error("error acking stream", "error", res.Err())
-		return errs.NewRedisError(errs.OpAckStream, err)
+		return errs.NewRedisError(errs.OpAckStream, res.Err())
 	}
 
 	// Delete the message from the stream
@@ -260,6 +256,15 @@ func (r *RecoverableRedisStreamClient) DoneStream(ctx context.Context, dataStrea
 		r.logger.Error("error deleting stream", "error", res.Err())
 		return errs.NewRedisError(errs.OpDelStream, res.Err())
 	}
+
+	// release the lock now that the entry is no longer pending
+	_, err = streamLocksInfo.RedsyncMutex.Unlock()
+	if err != nil && !errors.Is(errors.Unwrap(err), redsync.ErrLockAlreadyExpired) {
+		r.logger.Error("error unlocking stream", "error", err.Error())
+		r.metricsRecorder.RecordLockReleaseAttempt(dataStreamName, false)
+		return errs.NewMutexError(errs.OpUnlockMutex, err)
+	}
+	r.metricsRecorder.RecordLockReleaseAttempt(dataStreamName, true)
 
 	r.metricsRecorder.RecordStreamProcessingEnd(dataStreamName, time.Now())
 	return nil
