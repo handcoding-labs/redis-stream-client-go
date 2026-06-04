@@ -20,7 +20,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   jittered to avoid synchronized scans across consumers
   ([#110](https://github.com/handcoding-labs/redis-stream-client-go/issues/110)).
 - **`_retry_count` field and DLQ routing**: re-queued messages carry a retry count; once it exceeds
-  `RecoveryConfig.MaxRetries` they are routed to `RecoveryConfig.DLQStream` (or dropped if unset)
+  `RecoveryConfig.MaxRetries` they are routed to `RecoveryConfig.DLQStream` (defaults to
+  `<lbs>-dlq`). The DLQ is capped with an approximate `MAXLEN` trim via `RecoveryConfig.DLQMaxLen`
+  (default 10000; `0` disables the cap) so it cannot grow unbounded
   ([#106](https://github.com/handcoding-labs/redis-stream-client-go/issues/106)).
 - New metrics on `metrics.Recorder`: `RecordReconciliationScan`, `RecordReQueue`,
   `RecordDLQRouting`, `RecordMutexAliveSkip`, `RecordAckAddGap`, `RecordTopologyReset`
