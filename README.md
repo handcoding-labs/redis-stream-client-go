@@ -64,6 +64,7 @@ client, _ := impl.NewRedisStreamClient(
         BatchSize:              50,
         MaxRetries:             3,
         DLQStream:              "my-service-dlq",
+        DLQMaxLen:              10000, // approx MAXLEN cap on the DLQ; 0 => unbounded
     }),
 )
 ```
@@ -314,7 +315,8 @@ client, err := impl.NewRedisStreamClient(
         MinIdleTime:            30 * time.Second, // min idle before a pending message is recoverable
         BatchSize:              50,               // max pending messages inspected per scan
         MaxRetries:             3,                // re-queues before DLQ routing
-        DLQStream:              "my-service-dlq", // empty => drop after MaxRetries
+        DLQStream:              "my-service-dlq", // empty => defaults to "<service>-input-dlq"
+        DLQMaxLen:              10000,            // approx MAXLEN cap on the DLQ; 0 => unbounded
     }),
 )
 ```
@@ -322,7 +324,7 @@ client, err := impl.NewRedisStreamClient(
 ### Available Options:
 
 - **`WithClusterMode(mode)`**: Selects the recovery/keyspace strategy — `ClusterModeSingleShard` (default) or `ClusterModeOSS` (requires a `*redis.ClusterClient`). See [Cluster support](#cluster-support).
-- **`WithRecoveryConfig(config)`**: Tunes the periodic reconciliation scan (`ReconciliationInterval`, `MinIdleTime`, `BatchSize`, `MaxRetries`, `DLQStream`). Defaults: 60s / 30s / 50 / 3 / "".
+- **`WithRecoveryConfig(config)`**: Tunes the periodic reconciliation scan (`ReconciliationInterval`, `MinIdleTime`, `BatchSize`, `MaxRetries`, `DLQStream`, `DLQMaxLen`). Defaults: 60s / 30s / 50 / 3 / `"<service>-input-dlq"` / 10000. A `RecoveryConfigBuilder` (`NewRecoveryConfigBuilder().…Build()`) is also available and validates on `Build()`.
 - **`WithRetryConfig(config)`**: Configures retry/backoff for transient LBS read errors.
 - **`WithLogger(logger)`**: Provide a custom `*slog.Logger`.
 - **`WithMetricsRecorder(recorder)`**: Provide a `metrics.Recorder` for instrumentation (see [docs/METRICS.md](docs/METRICS.md)).

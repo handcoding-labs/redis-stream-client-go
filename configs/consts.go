@@ -61,4 +61,8 @@ const (
 	DefaultMaxReQueueRetries = 3
 	// DefaultJitterFraction is the fraction of the reconciliation interval used as random jitter.
 	DefaultJitterFraction = 0.1
+	// DefaultDLQMaxLen caps the DLQ stream length by default (approximate MAXLEN trim) so it does
+	// not grow unbounded, since nothing acknowledges or trims it. Set RecoveryConfig.DLQMaxLen to 0
+	// to disable the cap and retain every routed message.
+	DefaultDLQMaxLen = 10000
 )

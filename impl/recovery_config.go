@@ -33,6 +33,11 @@ type RecoveryConfig struct {
 	// left empty it defaults to "<lbs-name>-dlq" (see NewRedisStreamClient) so poison messages are
 	// preserved rather than dropped.
 	DLQStream string
+
+	// DLQMaxLen caps the DLQ stream length using an approximate MAXLEN trim on every XADD. Nothing
+	// acknowledges or trims the DLQ, so without a cap it would grow unbounded. 0 disables the cap
+	// (unbounded). Defaults to configs.DefaultDLQMaxLen.
+	DLQMaxLen int64
 }
 
 // DefaultRecoveryConfig returns the default recovery configuration. DLQStream is left empty here so
@@ -44,6 +49,7 @@ func DefaultRecoveryConfig() RecoveryConfig {
 		BatchSize:              configs.DefaultReconciliationBatchSize,
 		MaxRetries:             configs.DefaultMaxReQueueRetries,
 		DLQStream:              "",
+		DLQMaxLen:              configs.DefaultDLQMaxLen,
 	}
 }
 
@@ -60,6 +66,9 @@ func (rc RecoveryConfig) Validate() error {
 	}
 	if rc.MaxRetries < 0 {
 		return fmt.Errorf("%w: maxRetries must be >= 0", errs.ErrInvalidRecoveryConfig)
+	}
+	if rc.DLQMaxLen < 0 {
+		return fmt.Errorf("%w: dlqMaxLen must be >= 0 (0 disables the cap)", errs.ErrInvalidRecoveryConfig)
 	}
 	return nil
 }
@@ -107,6 +116,12 @@ func (b *RecoveryConfigBuilder) WithMaxRetries(n int) *RecoveryConfigBuilder {
 // WithDLQStream sets the DLQ stream name. Leave unset to use the per-service default.
 func (b *RecoveryConfigBuilder) WithDLQStream(name string) *RecoveryConfigBuilder {
 	b.cfg.DLQStream = name
+	return b
+}
+
+// WithDLQMaxLen caps the DLQ stream length (approximate MAXLEN trim). Pass 0 to disable the cap.
+func (b *RecoveryConfigBuilder) WithDLQMaxLen(n int64) *RecoveryConfigBuilder {
+	b.cfg.DLQMaxLen = n
 	return b
 }
 

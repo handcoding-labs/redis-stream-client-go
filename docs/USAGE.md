@@ -51,7 +51,8 @@ client, err := rsc.NewRedisStreamClient(
         MinIdleTime:            30 * time.Second,    // Default: 30s
         BatchSize:              50,                  // Default: 50
         MaxRetries:             3,                   // Default: 3
-        DLQStream:              "my-service-dlq",    // Default: "" (drop after MaxRetries)
+        DLQStream:              "my-service-dlq",    // Default: "" => "<service>-input-dlq"
+        DLQMaxLen:              10000,               // Default: 10000 (approx MAXLEN); 0 => unbounded
     }),
     rsc.WithRetryConfig(rsc.RetryConfig{
         MaxRetries:        -1,                   // Default: 5

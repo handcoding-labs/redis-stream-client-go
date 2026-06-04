@@ -54,7 +54,8 @@ impl.WithRecoveryConfig(impl.RecoveryConfig{
     MinIdleTime:            30 * time.Second, // min idle before a pending msg is recoverable
     BatchSize:              50,               // max pending msgs inspected per scan
     MaxRetries:             3,                // re-queues before DLQ routing
-    DLQStream:              "my-service-dlq", // empty => drop after MaxRetries
+    DLQStream:              "my-service-dlq", // empty => defaults to "<service>-input-dlq"
+    DLQMaxLen:              10000,            // approx MAXLEN cap on the DLQ; 0 => unbounded
 })
 ```
 

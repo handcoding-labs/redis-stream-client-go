@@ -164,6 +164,10 @@ func (r *RecoverableRedisStreamClient) routeToDLQ(
 		dlqValues[configs.DLQReasonField] = reason
 		if err := r.redisClient.XAdd(ctx, &redis.XAddArgs{
 			Stream: r.recoveryConfig.DLQStream,
+			// Approximate MAXLEN trim keeps the DLQ from growing unbounded (nothing acks it).
+			// MaxLen == 0 leaves the stream uncapped.
+			MaxLen: r.recoveryConfig.DLQMaxLen,
+			Approx: true,
 			Values: dlqValues,
 		}).Err(); err != nil {
 			r.metricsRecorder.RecordAckAddGap(dataStreamName)

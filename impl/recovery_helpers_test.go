@@ -114,6 +114,7 @@ func TestRecoveryConfigValidate(t *testing.T) {
 		{ReconciliationInterval: time.Second, MinIdleTime: 0, BatchSize: 1, MaxRetries: 0},
 		{ReconciliationInterval: time.Second, MinIdleTime: time.Second, BatchSize: 0, MaxRetries: 0},
 		{ReconciliationInterval: time.Second, MinIdleTime: time.Second, BatchSize: 1, MaxRetries: -1},
+		{ReconciliationInterval: time.Second, MinIdleTime: time.Second, BatchSize: 1, MaxRetries: 0, DLQMaxLen: -1},
 	}
 	for i, cfg := range bad {
 		if err := cfg.Validate(); err == nil {
