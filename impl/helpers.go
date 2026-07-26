@@ -39,11 +39,16 @@ func (r *RecoverableRedisStreamClient) cleanup() error {
 	// cancel LBS context
 	r.lbsCtxCancelFunc()
 
-	// close pub sub
-	if err := r.pubSub.Close(); err != nil {
-		r.logger.Error("error closing redis pub sub")
-		return errs.NewRedisError(errs.OpClosePubSub, err)
+	// close single-shard pub sub (nil in ClusterModeOSS)
+	if r.pubSub != nil {
+		if err := r.pubSub.Close(); err != nil {
+			r.logger.Error("error closing redis pub sub")
+			return errs.NewRedisError(errs.OpClosePubSub, err)
+		}
 	}
+
+	// close any per-master subscriptions opened in ClusterModeOSS
+	r.oss.closeAll(r.logger)
 
 	return nil
 }

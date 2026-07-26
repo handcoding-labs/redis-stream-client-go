@@ -17,6 +17,19 @@ type testMetricsRecorder struct {
 	kspNotificationDropped int
 	streamProcessingStart  map[string]time.Time
 	streamProcessingEnd    map[string]time.Time
+
+	reconciliationScanCount int
+	requeuedTotal           int
+	skippedAliveTotal       int
+	dlqRoutedTotal          int
+	requeueCount            int
+	dlqRoutingCount         int
+	mutexAliveSkipCount     int
+	ackAddGapCount          int
+	topologyResetCount      int
+
+	masterKeyspaceSetupSuccess int
+	masterKeyspaceSetupFailure int
 }
 
 func (t *testMetricsRecorder) RecordStartupRecovery(success bool, unackedCount int, duration time.Duration) {
@@ -79,6 +92,55 @@ func (t *testMetricsRecorder) RecordKspNotificationDropped() {
 	t.kspNotificationDropped++
 }
 
+func (t *testMetricsRecorder) RecordReconciliationScan(requeued, skippedAlive, dlqRouted int, duration time.Duration) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.reconciliationScanCount++
+	t.requeuedTotal += requeued
+	t.skippedAliveTotal += skippedAlive
+	t.dlqRoutedTotal += dlqRouted
+}
+
+func (t *testMetricsRecorder) RecordReQueue(streamName string, success bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.requeueCount++
+}
+
+func (t *testMetricsRecorder) RecordDLQRouting(streamName string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.dlqRoutingCount++
+}
+
+func (t *testMetricsRecorder) RecordMutexAliveSkip(streamName string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.mutexAliveSkipCount++
+}
+
+func (t *testMetricsRecorder) RecordAckAddGap(streamName string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.ackAddGapCount++
+}
+
+func (t *testMetricsRecorder) RecordTopologyReset(success bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.topologyResetCount++
+}
+
+func (t *testMetricsRecorder) RecordMasterKeyspaceSetup(success bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if success {
+		t.masterKeyspaceSetupSuccess++
+	} else {
+		t.masterKeyspaceSetupFailure++
+	}
+}
+
 // Getter methods to support assertions in tests
 func (t *testMetricsRecorder) StartupRecoveryCount() int {
 	t.mu.Lock()
@@ -138,4 +200,70 @@ func (t *testMetricsRecorder) StreamProcessingEndCount() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return len(t.streamProcessingEnd)
+}
+
+func (t *testMetricsRecorder) ReconciliationScanCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.reconciliationScanCount
+}
+
+func (t *testMetricsRecorder) RequeuedTotal() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.requeuedTotal
+}
+
+func (t *testMetricsRecorder) SkippedAliveTotal() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.skippedAliveTotal
+}
+
+func (t *testMetricsRecorder) DLQRoutedTotal() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.dlqRoutedTotal
+}
+
+func (t *testMetricsRecorder) ReQueueCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.requeueCount
+}
+
+func (t *testMetricsRecorder) DLQRoutingCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.dlqRoutingCount
+}
+
+func (t *testMetricsRecorder) MutexAliveSkipCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.mutexAliveSkipCount
+}
+
+func (t *testMetricsRecorder) AckAddGapCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.ackAddGapCount
+}
+
+func (t *testMetricsRecorder) TopologyResetCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.topologyResetCount
+}
+
+func (t *testMetricsRecorder) MasterKeyspaceSetupSuccessCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.masterKeyspaceSetupSuccess
+}
+
+func (t *testMetricsRecorder) MasterKeyspaceSetupFailureCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.masterKeyspaceSetupFailure
 }

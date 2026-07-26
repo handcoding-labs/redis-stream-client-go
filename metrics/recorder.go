@@ -26,4 +26,26 @@ type Recorder interface {
 	// RecordKspNotificationDropped records the event of a keyspace notification being dropped
 	// due to a full broker channel.
 	RecordKspNotificationDropped()
+	// RecordReconciliationScan records the outcome of a single periodic reconciliation scan,
+	// including how many messages were re-queued, skipped because their lock was still held by a
+	// live consumer, routed to the DLQ, and the total scan duration.
+	RecordReconciliationScan(requeued, skippedAlive, dlqRouted int, duration time.Duration)
+	// RecordReQueue records an attempt to re-queue a pending message (XACK + XADD), including
+	// whether this consumer won the XACK race and completed the re-add.
+	RecordReQueue(streamName string, success bool)
+	// RecordDLQRouting records that a message exceeded MaxRetries and was routed to the DLQ.
+	RecordDLQRouting(streamName string)
+	// RecordMutexAliveSkip records that a pending message was skipped during recovery because its
+	// lock key still exists (the owning consumer is alive but slow).
+	RecordMutexAliveSkip(streamName string)
+	// RecordAckAddGap records the rare case where XACK succeeded but the subsequent XADD failed,
+	// leaving the message dropped from the PEL without being re-queued.
+	RecordAckAddGap(streamName string)
+	// RecordTopologyReset records an attempt to reset the cluster topology and re-subscribe to
+	// keyspace notifications (ClusterModeOSS only).
+	RecordTopologyReset(success bool)
+	// RecordMasterKeyspaceSetup records the per-master outcome of enabling keyspace notifications
+	// across the cluster (ClusterModeOSS only). It makes partial failures — where some masters are
+	// configured and others are not — observable.
+	RecordMasterKeyspaceSetup(success bool)
 }

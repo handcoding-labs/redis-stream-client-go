@@ -158,15 +158,16 @@ go test -bench=. ./...
    - All exported functions must have godoc comments
    - Include examples for complex functions
    ```go
-   // Claim allows a consumer to claim a data stream from another failed consumer.
-   // It should be called when a consumer receives a StreamExpired notification.
+   // Claim recovers a data stream from a failed consumer by re-queuing it (XACK + XADD) for
+   // redistribution. Call it on a StreamExpired notification; the stream is processed later when
+   // it arrives as StreamAdded. Returns ErrAlreadyClaimed if another consumer (or the periodic
+   // reconciliation scan) already recovered it.
    //
    // Example:
-   //   err := client.Claim(ctx, "session0:1234567890-0")
-   //   if err != nil {
-   //       slog.Error("Failed to claim stream", "error", err)
+   //   if err := client.Claim(ctx, notification.Payload); err != nil {
+   //       slog.Debug("already recovered elsewhere", "error", err)
    //   }
-   func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, kspNotification string) error {
+   func (r *RecoverableRedisStreamClient) Claim(ctx context.Context, lbsInfo notifs.LBSInfo) error {
    ```
 
 ## 🔍 Code Review Process

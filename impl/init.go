@@ -17,7 +17,23 @@ import (
 func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx context.Context) error {
 	// subscribe to key space events for expiration only
 	// https://redis.io/docs/latest/develop/use/keyspace-notifications/
-	existingConfig := r.redisClient.ConfigGet(ctx, configs.NotifyKeyspaceEventsCmd)
+	//
+	// In ClusterModeOSS the config must be applied to every master, since keyspace notifications are
+	// produced by the node that owns the expiring key.
+	if r.clusterMode == ClusterModeOSS {
+		cluster, ok := r.redisClient.(*redis.ClusterClient)
+		if !ok {
+			return errs.ErrClusterClientRequired
+		}
+		return r.enableKeyspaceNotifsOnMasters(ctx, cluster)
+	}
+
+	return r.enableKeyspaceNotifsOn(ctx, r.redisClient)
+}
+
+// enableKeyspaceNotifsOn applies the expired-events keyspace config to a single Redis endpoint.
+func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsOn(ctx context.Context, client redis.Cmdable) error {
+	existingConfig := client.ConfigGet(ctx, configs.NotifyKeyspaceEventsCmd)
 	configVals, err := existingConfig.Result()
 	if err != nil {
 		return errs.NewRedisError(errs.OpEnableKeyspaceNotification, err)
@@ -34,7 +50,7 @@ func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx 
 		}
 	}
 
-	res := r.redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
+	res := client.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents)
 	if res.Err() != nil {
 		return res.Err()
 	}
@@ -43,14 +59,26 @@ func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx 
 }
 
 func (r *RecoverableRedisStreamClient) subscribeToExpiredEvents(ctx context.Context) {
+	// In ClusterModeOSS, keyspace notifications fire only on the master that owns the expiring key,
+	// so subscribe on every master and fan all subscriptions into the single kspChan.
+	if r.clusterMode == ClusterModeOSS {
+		r.subscribeToExpiredEventsOSS(ctx)
+		return
+	}
+
 	r.pubSub = r.redisClient.PSubscribe(ctx, configs.MutexKeySpacePattern)
-	redisPubSubChan := r.pubSub.Channel(
+	r.fanInPubSub(r.pubSub)
+}
+
+// fanInPubSub relays messages from a single pub/sub subscription into the shared kspChan, dropping
+// (with a metric) when kspChan is full so a slow consumer never blocks the pub/sub reader.
+func (r *RecoverableRedisStreamClient) fanInPubSub(pubSub *redis.PubSub) {
+	redisPubSubChan := pubSub.Channel(
 		redis.WithChannelHealthCheckInterval(5*time.Second),
 		redis.WithChannelSendTimeout(r.kspChanTimeout),
 		redis.WithChannelSize(r.kspChanSize),
 	)
 
-	// Wrap the redis pubsub channel with our own channel that has a timeout and proper logging
 	go func() {
 		for msg := range redisPubSubChan {
 			select {
@@ -66,68 +94,87 @@ func (r *RecoverableRedisStreamClient) subscribeToExpiredEvents(ctx context.Cont
 	}()
 }
 
-// This method doesn't return error and just logs because we execute this
-// when no consumer was around to recevie notifications and messages were pending.
-// So, this method is just recovering those messages and if there is an issue in
-// processing them, then erroring out will stop consumer from processing latest streams also.
-func (r *RecoverableRedisStreamClient) recoverUnackedLBS(ctx context.Context) error {
-	// nextStart is initialized to empty string to claiming can start
-	// when it gets populated as 0-0 as a result to auto claim,
-	// it means there is nothing more to claim or process
-	nextStart := ""
-	var unackedMessages []redis.XMessage
+// runReconciliationLoop periodically recovers pending LBS messages whose owning consumer has died.
+//
+// It replaces the old XAUTOCLAIM-based startup recovery. The first pass runs immediately (covering
+// startup recovery), then subsequent passes run every ReconciliationInterval plus jitter. This is
+// the authoritative, cluster-safe recovery mechanism: it inspects the group's pending entries,
+// verifies the owning consumer is dead (its lock key is gone), and re-queues the work via XACK+XADD.
+func (r *RecoverableRedisStreamClient) runReconciliationLoop(ctx context.Context) {
+	// immediate first pass (startup recovery)
+	r.reconcileLBS(ctx, true)
+
+	for {
+		select {
+		case <-ctx.Done():
+			r.logger.Debug("context done, stopping reconciliation loop", "consumer_id", r.consumerID)
+			return
+		case <-time.After(nextReconciliationDelay(r.recoveryConfig.ReconciliationInterval)):
+			r.reconcileLBS(ctx, false)
+		}
+	}
+}
+
+// reconcileLBS performs a single reconciliation pass: it reads up to BatchSize pending LBS messages
+// that have been idle for at least MinIdleTime and re-queues those whose owning consumer is dead.
+// Errors are logged (not fatal) so a transient failure does not stop the consumer. The first pass
+// (startup==true) also records the startup-recovery metric, since it replaces the old XAUTOCLAIM
+// startup recovery.
+func (r *RecoverableRedisStreamClient) reconcileLBS(ctx context.Context, startup bool) {
 	start := time.Now()
+	var requeued, skippedAlive, dlqRouted int
 
-	for nextStart != configs.StartIDPair {
-		xautoClaimRes := r.redisClient.XAutoClaim(ctx, &redis.XAutoClaimArgs{
-			Stream:   r.lbsName(),
-			Group:    r.lbsGroupName(),
-			MinIdle:  r.lbsIdleTime,
-			Start:    configs.StartIDPair,
-			Count:    int64(r.lbsRecoveryCount),
-			Consumer: r.consumerID,
-		})
+	pending, err := r.redisClient.XPendingExt(ctx, &redis.XPendingExtArgs{
+		Stream: r.lbsName(),
+		Group:  r.lbsGroupName(),
+		Idle:   r.recoveryConfig.MinIdleTime,
+		Start:  configs.MinimalRangeID,
+		End:    configs.MaximalRangeID,
+		Count:  int64(r.recoveryConfig.BatchSize),
+	}).Result()
+	if err != nil {
+		r.logger.Warn("error reading pending LBS messages during reconciliation", "error", err)
+		r.metricsRecorder.RecordReconciliationScan(0, 0, 0, time.Since(start))
+		if startup {
+			r.metricsRecorder.RecordStartupRecovery(false, 0, time.Since(start))
+		}
+		return
+	}
 
-		if err := xautoClaimRes.Err(); err != nil {
-			r.logger.Error("error while getting unacked messages", "error", err)
-			r.metricsRecorder.RecordStartupRecovery(false, len(unackedMessages), time.Since(start))
-			return errs.NewRedisError(errs.OpGetUnackedMessages, err)
+	for _, p := range pending {
+		if r.isContextDone(ctx) {
+			return
 		}
 
-		msgs, start := xautoClaimRes.Val()
-		unackedMessages = append(unackedMessages, msgs...)
-		nextStart = start
+		outcome, dataStreamName, err := r.reQueue(ctx, p.ID)
+		if err != nil {
+			r.logger.Warn("error re-queuing pending message during reconciliation",
+				"error", err, "id_in_lbs", p.ID, "data_stream", dataStreamName)
+			continue
+		}
+
+		switch outcome {
+		case reQueueRequeued:
+			requeued++
+		case reQueueSkippedAlive:
+			skippedAlive++
+		case reQueueDLQ:
+			dlqRouted++
+		}
 	}
 
-	if len(unackedMessages) > 0 {
-		r.logger.Info("unacked messages found in LBS for consumer", "pending_count", len(unackedMessages))
-	} else {
-		r.logger.Info("no unacked messages found in LBS for consumer")
+	r.metricsRecorder.RecordReconciliationScan(requeued, skippedAlive, dlqRouted, time.Since(start))
+	if startup {
+		r.metricsRecorder.RecordStartupRecovery(true, requeued+dlqRouted, time.Since(start))
+		r.logger.Info("startup reconciliation scan complete",
+			"consumer_id", r.consumerID, "requeued", requeued, "skipped_alive", skippedAlive,
+			"dlq_routed", dlqRouted, "pending_inspected", len(pending))
 	}
-
-	streams := []redis.XStream{
-		{
-			Stream:   r.lbsName(),
-			Messages: unackedMessages,
-		},
+	if requeued > 0 || dlqRouted > 0 || skippedAlive > 0 {
+		r.logger.Info("reconciliation scan complete",
+			"requeued", requeued, "skipped_alive", skippedAlive, "dlq_routed", dlqRouted,
+			"duration_seconds", time.Since(start).Seconds())
 	}
-
-	// process the unacked messages
-	// note that there is one more place where `processLBSMessages` can fail in readLBSStream
-	// and we send an notification on outputChan. Here we don't do that because this is
-	// boot up code and we're recovering messages and thus outputChan isn't technically
-	// available to client yet.
-	if err := r.processLBSMessages(ctx, streams, r.rs); err != nil {
-		r.logger.Error("fatal error while processing unacked messages", "error", err)
-		r.metricsRecorder.RecordStartupRecovery(false, len(unackedMessages), time.Since(start))
-		return errs.NewRedisError(errs.OpProcessLBSMessages, err)
-	}
-
-	r.metricsRecorder.RecordStartupRecovery(true, len(unackedMessages), time.Since(start))
-	r.logger.Info("successfully recovered unacked messages",
-		"count", len(unackedMessages), "duration_seconds", time.Since(start).Seconds())
-
-	return nil
 }
 
 func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
