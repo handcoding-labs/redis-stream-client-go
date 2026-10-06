@@ -23,6 +23,13 @@ func (h *captureHandler) Handle(ctx context.Context, record slog.Record) error {
 	return nil
 }
 
+// messages returns a snapshot of the captured messages; safe to call while the logger is in use.
+func (h *captureHandler) messages() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), *h.output...)
+}
+
 func (h *captureHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	return h
 }

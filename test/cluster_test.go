@@ -128,6 +128,7 @@ func TestXAckFirstDeduplicationAcrossConcurrentRecoverers(t *testing.T) {
 	// kill the victim; its lock expires (TTL == heartbeat interval) and the pending message becomes
 	// eligible for recovery once idle exceeds MinIdleTime.
 	killVictim()
+	crash(victim)
 
 	require.Eventually(t, func() bool {
 		return rec1.ReQueueCount()+rec2.ReQueueCount() >= 1
@@ -165,6 +166,7 @@ func TestMultiShardRecoveryViaPeriodicScan(t *testing.T) {
 
 	// kill consumer1; its lock expires shortly after.
 	killConsumer()
+	crash(consumer1)
 
 	// consumer2 never wires Claim/StreamExpired handling; recovery must come from the scan.
 	consumer2, rec2 := createConsumerWithRecovery("222", redisContainer)

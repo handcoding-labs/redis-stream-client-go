@@ -940,6 +940,7 @@ func TestLoggerInjection(t *testing.T) {
 	// metrics
 	require.Equal(t, 1, rec.StartupRecoveryCount(), "logger injection consumer startup")
 
+	logOutput = customHandler.messages()
 	require.NotEmpty(t, logOutput)
 	found := false
 	// we're just testing logging here so one deterministic message is enough to confirm the
@@ -1054,11 +1055,22 @@ func createConsumer(name string, redisContainer *testRedis, opts ...impl.Recover
 		impl.WithLBSRecoveryCount(500),
 		impl.WithOutputChanSize(500),
 		impl.WithMetricsRecorder(rec))
-	relredis, err := impl.NewRedisStreamClient(newRedisClient(redisContainer), "consumer", opts...)
+	rc := newRedisClient(redisContainer)
+	relredis, err := impl.NewRedisStreamClient(rc, "consumer", opts...)
 	if err != nil {
 		return nil, rec
 	}
-	return &trackedClient{RedisStreamClient: relredis, env: redisContainer}, rec
+	return &trackedClient{RedisStreamClient: relredis, env: redisContainer, rc: rc}, rec
+}
+
+// crash simulates the consumer's process dying: besides the lock heartbeat stopping (cancel the
+// context passed to Init), its Redis connections are torn down. Cancelling the context alone is not
+// enough, because the consumer's blocked XREADGROUP stays parked on the server and would swallow the
+// next message added to the LBS stream, such as the re-queue of its own dead work.
+func crash(client types.RedisStreamClient) {
+	if tc, ok := client.(*trackedClient); ok {
+		_ = tc.rc.Close()
+	}
 }
 
 // trackedClient makes sure the client is stopped when the test ends, even if the test never calls
@@ -1066,6 +1078,7 @@ func createConsumer(name string, redisContainer *testRedis, opts ...impl.Recover
 type trackedClient struct {
 	types.RedisStreamClient
 	env *testRedis
+	rc  redisgo.UniversalClient
 }
 
 func (c *trackedClient) Init(ctx context.Context) (<-chan notifs.RecoverableRedisNotification, error) {
