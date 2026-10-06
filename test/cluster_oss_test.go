@@ -64,8 +64,7 @@ func failoverShard(t *testing.T, cluster *redisgo.ClusterClient, shard clusterSh
 	oldNode, newNode = nodeClient(t, shard.master), nodeClient(t, shard.replicas[0])
 
 	failover := func(to, from *redisgo.Client) {
-		require.NoError(t, to.ClusterFailover(context.Background()).Err())
-		require.Eventuallyf(t, func() bool {
+		converged := func() bool {
 			cluster.ReloadState(context.Background())
 			shards, err := loadClusterShards(cluster)
 			if err != nil {
@@ -77,7 +76,23 @@ func failoverShard(t *testing.T, cluster *redisgo.ClusterClient, shard clusterSh
 				}
 			}
 			return false
-		}, 30*time.Second, 200*time.Millisecond, "failover %s -> %s did not complete",
+		}
+
+		// Request the failover only once the old master regards the target as its replica and the
+		// target is in sync; otherwise the request is ignored and Redis gives up after 5s ("Manual
+		// failover timed out"). Keep re-requesting until the topology flips in case an attempt
+		// still aborts, but never while an earlier attempt can still be running.
+		var lastAttempt time.Time
+		require.Eventuallyf(t, func() bool {
+			if converged() {
+				return true
+			}
+			if time.Since(lastAttempt) > 7*time.Second && !isMaster(to) && replicaLinkUp(to) && masterSeesReplica(from, to) {
+				lastAttempt = time.Now()
+				_ = to.ClusterFailover(context.Background()).Err()
+			}
+			return false
+		}, 60*time.Second, 200*time.Millisecond, "failover %s -> %s did not complete",
 			from.Options().Addr, to.Options().Addr)
 
 		require.Eventually(t, func() bool {
@@ -126,6 +141,35 @@ func pubSubPatternClients(node *redisgo.Client) (int, error) {
 		}
 	}
 	return n, nil
+}
+
+// replicaLinkUp reports whether a replica is connected to its master (initial or re-sync finished).
+func replicaLinkUp(node *redisgo.Client) bool {
+	info, err := node.Info(context.Background(), "replication").Result()
+	return err == nil && strings.Contains(info, "master_link_status:up")
+}
+
+// masterSeesReplica reports whether master's view of the cluster lists replica as its own replica.
+// A master ignores a manual failover request from a node it does not (yet) regard as its replica,
+// which is the case for a moment after a role change, so the request would just time out.
+func masterSeesReplica(master, replica *redisgo.Client) bool {
+	nodes, err := master.ClusterNodes(context.Background()).Result()
+	if err != nil {
+		return false
+	}
+	var masterID string
+	for _, line := range strings.Split(nodes, "\n") {
+		if f := strings.Fields(line); len(f) > 3 && strings.Contains(f[2], "myself") {
+			masterID = f[0]
+		}
+	}
+	for _, line := range strings.Split(nodes, "\n") {
+		f := strings.Fields(line)
+		if len(f) > 3 && strings.HasPrefix(f[1], replica.Options().Addr+"@") {
+			return strings.Contains(f[2], "slave") && f[3] == masterID
+		}
+	}
+	return false
 }
 
 // isMaster reports whether the node currently has the master role.
