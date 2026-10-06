@@ -14,7 +14,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx context.Context) error {
+// enableKeyspaceNotifsForExpiredEvents applies the expired-events keyspace config. When reapply is
+// true the caller is re-applying config it already applied itself (ResetTopology), so pre-existing
+// config on a node is expected rather than a conflict and the force-override guard is not enforced.
+func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx context.Context, reapply bool) error {
 	// subscribe to key space events for expiration only
 	// https://redis.io/docs/latest/develop/use/keyspace-notifications/
 	//
@@ -25,14 +28,18 @@ func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx 
 		if !ok {
 			return errs.ErrClusterClientRequired
 		}
-		return r.enableKeyspaceNotifsOnMasters(ctx, cluster)
+		return r.enableKeyspaceNotifsOnMasters(ctx, cluster, reapply)
 	}
 
-	return r.enableKeyspaceNotifsOn(ctx, r.redisClient)
+	return r.enableKeyspaceNotifsOn(ctx, r.redisClient, reapply)
 }
 
 // enableKeyspaceNotifsOn applies the expired-events keyspace config to a single Redis endpoint.
-func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsOn(ctx context.Context, client redis.Cmdable) error {
+func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsOn(
+	ctx context.Context,
+	client redis.Cmdable,
+	reapply bool,
+) error {
 	existingConfig := client.ConfigGet(ctx, configs.NotifyKeyspaceEventsCmd)
 	configVals, err := existingConfig.Result()
 	if err != nil {
@@ -41,11 +48,11 @@ func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsOn(ctx context.Contex
 
 	for _, v := range configVals {
 		if len(v) > 0 {
-			// some config for key space notifications already exists, so exit
-			if !r.forceOverrideConfig {
-				return errs.ErrExistingConfigWithoutOverride
-			} else {
+			// some config for key space notifications already exists
+			if r.forceOverrideConfig {
 				r.logger.Warn("overriding existing keyspace notifications config since force override is set")
+			} else if !reapply {
+				return errs.ErrExistingConfigWithoutOverride
 			}
 		}
 	}

@@ -44,10 +44,13 @@ func (o *ossSubscriptions) closeAll(logger *slog.Logger) {
 // cluster. It tolerates partial failure: a single unreachable master is logged and recorded via a
 // metric rather than aborting the whole sweep, since the periodic reconciliation scan is the
 // authoritative recovery path. A deterministic misconfiguration (existing config without force
-// override) is fatal and aborts immediately, as is the case where every master fails.
+// override) is fatal and aborts immediately, as is the case where every master fails. reapply is set
+// by ResetTopology: the masters then already carry the config this client applied during Init, so
+// the existing-config guard is skipped.
 func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsOnMasters(
 	ctx context.Context,
 	cluster *redis.ClusterClient,
+	reapply bool,
 ) error {
 	var (
 		mu        sync.Mutex
@@ -57,7 +60,7 @@ func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsOnMasters(
 
 	// ForEachMaster runs the callback concurrently, so guard the counters with the mutex.
 	err := cluster.ForEachMaster(ctx, func(ctx context.Context, master *redis.Client) error {
-		if setupErr := r.enableKeyspaceNotifsOn(ctx, master); setupErr != nil {
+		if setupErr := r.enableKeyspaceNotifsOn(ctx, master, reapply); setupErr != nil {
 			// A missing force-override is a deterministic operator decision that applies to every
 			// master equally; propagate it so Init fails fast rather than silently degrading.
 			if errors.Is(setupErr, errs.ErrExistingConfigWithoutOverride) {

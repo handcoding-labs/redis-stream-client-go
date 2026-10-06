@@ -169,7 +169,7 @@ func (r *RecoverableRedisStreamClient) Init(ctx context.Context) (<-chan notifs.
 		}
 	}
 
-	keyspaceErr := r.enableKeyspaceNotifsForExpiredEvents(ctx)
+	keyspaceErr := r.enableKeyspaceNotifsForExpiredEvents(ctx, false)
 	if keyspaceErr != nil {
 		return nil, keyspaceErr
 	}
@@ -319,8 +319,9 @@ func (r *RecoverableRedisStreamClient) ResetTopology(ctx context.Context) error 
 	// reload the cluster's view of the topology (failover / resharding)
 	cluster.ReloadState(ctx)
 
-	// re-enable keyspace notifications on (possibly new) masters
-	if err := r.enableKeyspaceNotifsForExpiredEvents(ctx); err != nil {
+	// re-enable keyspace notifications on (possibly new) masters. The existing masters already carry
+	// the config this client applied in Init, so the existing-config guard must not fire here.
+	if err := r.enableKeyspaceNotifsForExpiredEvents(ctx, true); err != nil {
 		r.metricsRecorder.RecordTopologyReset(false)
 		return err
 	}
