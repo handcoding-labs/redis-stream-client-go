@@ -3,6 +3,8 @@ package test
 import (
 	"context"
 	"os"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -88,7 +90,14 @@ func TestMutexCheckPreventsDuplicateProcessingOfSlowConsumers(t *testing.T) {
 // TestXAckFirstDeduplicationAcrossConcurrentRecoverers covers issue #112.
 //
 // When a consumer dies, multiple other consumers may try to recover the same pending message
-// concurrently. The XACK-first ordering guarantees that exactly one of them re-queues the task.
+// concurrently. The XACK-first ordering guarantees that exactly one of them re-queues the task; the
+// others observe acked==0 and return ErrAlreadyClaimed.
+//
+// The test drives this deterministically by invoking Claim on the *same* stranded entry from two
+// consumers concurrently. Claim performs a single re-queue attempt (no scan loop), so the assertion
+// isolates the XACK-first dedup guarantee from the at-least-once re-queue churn a periodic scan can
+// introduce (a re-queued message being re-queued again before it is locked), which would otherwise
+// make a raw re-queue count non-deterministic.
 func TestXAckFirstDeduplicationAcrossConcurrentRecoverers(t *testing.T) {
 	ctx := context.Background()
 	victimCtx, killVictim := context.WithCancel(context.Background())
@@ -97,7 +106,8 @@ func TestXAckFirstDeduplicationAcrossConcurrentRecoverers(t *testing.T) {
 	redisClient := newRedisClient(redisContainer)
 	require.NoError(t, redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents).Err())
 
-	// victim consumer takes the stream (default config: its own scan won't interfere).
+	// victim consumer takes the stream, then dies. Default config everywhere so no periodic scan
+	// interferes — recovery is driven solely by the explicit concurrent Claim calls below.
 	victim, _ := createConsumer("000", redisContainer)
 	victimChan, err := victim.Init(victimCtx)
 	require.NoError(t, err)
@@ -106,12 +116,12 @@ func TestXAckFirstDeduplicationAcrossConcurrentRecoverers(t *testing.T) {
 	got := waitForStreamAdded(t, victimChan, "session0", 5*time.Second)
 	require.Equal(t, "session0", got.Payload.DataStreamName)
 
-	// two recoverers come up with fast scans
-	rec1Client, rec1 := createConsumerWithRecovery("111", redisContainer)
+	// two recoverers come up
+	rec1Client, rec1 := createConsumer("111", redisContainer)
 	op1, err := rec1Client.Init(ctx)
 	require.NoError(t, err)
 
-	rec2Client, rec2 := createConsumerWithRecovery("222", redisContainer)
+	rec2Client, rec2 := createConsumer("222", redisContainer)
 	op2, err := rec2Client.Init(ctx)
 	require.NoError(t, err)
 
@@ -125,19 +135,43 @@ func TestXAckFirstDeduplicationAcrossConcurrentRecoverers(t *testing.T) {
 		}
 	}()
 
-	// kill the victim; its lock expires (TTL == heartbeat interval) and the pending message becomes
-	// eligible for recovery once idle exceeds MinIdleTime.
+	// kill the victim and wait for its lock to expire (TTL == heartbeat interval), so the recoverers
+	// observe the owner as dead and the entry becomes recoverable.
 	killVictim()
 	crash(victim)
+	time.Sleep(4 * time.Second)
 
-	require.Eventually(t, func() bool {
-		return rec1.ReQueueCount()+rec2.ReQueueCount() >= 1
-	}, 15*time.Second, 200*time.Millisecond, "one recoverer should re-queue the stranded stream")
+	// resolve the stranded pending entry id (still owned by the dead victim in the group PEL)
+	pending, err := redisClient.XPendingExt(ctx, &redisgo.XPendingExtArgs{
+		Stream: "consumer-input",
+		Group:  "consumer-group",
+		Start:  "-",
+		End:    "+",
+		Count:  10,
+	}).Result()
+	require.NoError(t, err)
+	require.NotEmpty(t, pending, "the victim's message should still be pending")
+	lbsInfo := notifs.LBSInfo{DataStreamName: "session0", IDInLBS: pending[0].ID}
 
-	// Give any racing scan a moment, then assert exactly one re-queue total (XACK-first dedup).
-	time.Sleep(3 * time.Second)
+	// both recoverers Claim the same entry concurrently
+	var wg sync.WaitGroup
+	claimErrs := make([]error, 2)
+	wg.Add(2)
+	go func() { defer wg.Done(); claimErrs[0] = rec1Client.Claim(ctx, lbsInfo) }()
+	go func() { defer wg.Done(); claimErrs[1] = rec2Client.Claim(ctx, lbsInfo) }()
+	wg.Wait()
+
+	won := 0
+	for _, e := range claimErrs {
+		if e == nil {
+			won++
+		} else {
+			require.ErrorIs(t, e, errs.ErrAlreadyClaimed, "the losing Claim must report ErrAlreadyClaimed")
+		}
+	}
+	require.Equal(t, 1, won, "exactly one Claim must win the XACK race")
 	require.Equal(t, 1, rec1.ReQueueCount()+rec2.ReQueueCount(),
-		"exactly one recoverer must win the XACK race")
+		"exactly one recoverer re-queued the entry (XACK-first dedup)")
 
 	require.NoError(t, rec1Client.Done(ctx))
 	require.NoError(t, rec2Client.Done(ctx))
@@ -249,6 +283,89 @@ func TestRetryCountAndDLQRouting(t *testing.T) {
 	require.GreaterOrEqual(t, rec.DLQRoutingCount(), 1, "DLQ routing metric recorded")
 
 	require.NoError(t, client.Done(ctx))
+}
+
+// TestRetryCountEscalatesAcrossReQueuesToDLQ covers the re-queue "churn" path: a stranded message
+// that is recovered repeatedly without ever being processed to completion has its _retry_count
+// incremented on each re-queue, and is routed to the DLQ once the count would exceed MaxRetries.
+//
+// It exercises the exact reQueue primitive the periodic scan uses, but drives it deterministically
+// through Claim (one re-queue attempt per call) rather than racing scan passes — the escalation is
+// the behavior under test, and scan-timed churn is inherently non-deterministic. The client is not
+// Init'd, so no background reader/scan competes for the re-queued messages; a throwaway "ghost"
+// consumer makes each re-queued entry pending (with no lock) so the next Claim sees a dead owner.
+func TestRetryCountEscalatesAcrossReQueuesToDLQ(t *testing.T) {
+	ctx := context.Background()
+	redisContainer := setupSuite(t)
+	rc := newRedisClient(redisContainer)
+	require.NoError(t, rc.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents).Err())
+
+	const (
+		dlqStream  = "consumer-dlq"
+		maxRetries = 2
+	)
+	cfg := fastRecoveryConfig()
+	cfg.MaxRetries = maxRetries
+	cfg.DLQStream = dlqStream
+
+	_ = os.Setenv("POD_NAME", "recoverer")
+	rec := &testMetricsRecorder{}
+	client, err := impl.NewRedisStreamClient(
+		newRedisClient(redisContainer),
+		"consumer",
+		impl.WithForceConfigOverride(),
+		impl.WithRecoveryConfig(cfg),
+		impl.WithMetricsRecorder(rec),
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, "consumer-input", "consumer-group", "$").Err())
+
+	// ghostRead makes the newest LBS entry pending under a throwaway consumer (no lock acquired) and
+	// returns it, so the next Claim observes a dead owner and re-queues it.
+	ghostRead := func() redisgo.XMessage {
+		res := rc.XReadGroup(ctx, &redisgo.XReadGroupArgs{
+			Group:    "consumer-group",
+			Consumer: "ghost",
+			Streams:  []string{"consumer-input", ">"},
+			Count:    1,
+			Block:    2 * time.Second,
+		})
+		require.NoError(t, res.Err())
+		require.Len(t, res.Val(), 1)
+		require.Len(t, res.Val()[0].Messages, 1)
+		return res.Val()[0].Messages[0]
+	}
+	claim := func(id string) error {
+		return client.Claim(ctx, notifs.LBSInfo{DataStreamName: "session0", IDInLBS: id})
+	}
+
+	// seed the first entry (retry_count absent == 0)
+	require.NoError(t, rc.XAdd(ctx, &redisgo.XAddArgs{
+		Stream: "consumer-input",
+		Values: map[string]any{configs.LBSInput: `{"DataStreamName":"session0","Info":{"k":"v"}}`},
+	}).Err())
+	cur := ghostRead()
+
+	// each re-queue increments _retry_count: 0 -> 1 -> 2, up to MaxRetries
+	for want := 1; want <= maxRetries; want++ {
+		require.NoError(t, claim(cur.ID), "re-queue attempt %d should succeed", want)
+		cur = ghostRead()
+		require.Equal(t, strconv.Itoa(want), cur.Values[configs.RetryCountField],
+			"retry count after re-queue %d", want)
+	}
+	require.Equal(t, maxRetries, rec.ReQueueCount(), "one successful re-queue per attempt")
+
+	// the next recovery would push retry_count past MaxRetries -> route to DLQ instead
+	require.NoError(t, claim(cur.ID), "exhausting attempt should succeed (routes to DLQ)")
+
+	dlq := rc.XRange(ctx, dlqStream, "-", "+").Val()
+	require.Len(t, dlq, 1, "message should land in the DLQ after exhausting retries")
+	require.Equal(t, strconv.Itoa(maxRetries+1), dlq[0].Values[configs.RetryCountField])
+	require.Equal(t, configs.DLQReasonMaxRetries, dlq[0].Values[configs.DLQReasonField])
+	require.Contains(t, dlq[0].Values[configs.LBSInput], "session0")
+	require.Equal(t, int64(0), rc.XLen(ctx, "consumer-input").Val(), "nothing left in the LBS")
+	require.GreaterOrEqual(t, rec.DLQRoutingCount(), 1, "DLQ routing metric recorded")
 }
 
 // TestClusterModeOSSRequiresClusterClient covers part of issue #108: enabling ClusterModeOSS with a
