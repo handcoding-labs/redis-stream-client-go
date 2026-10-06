@@ -70,6 +70,14 @@ func (r *testRedis) newClient() redisgo.UniversalClient {
 	return redisgo.NewUniversalClient(&redisgo.UniversalOptions{Addrs: []string{r.addr}, DB: 0})
 }
 
+// newClusterClient is newClient for a cluster deployment, returning the concrete *redis.ClusterClient.
+func (r *testRedis) newClusterClient(t testing.TB) *redisgo.ClusterClient {
+	t.Helper()
+	cluster, ok := r.newClient().(*redisgo.ClusterClient)
+	require.True(t, ok, "expected a cluster deployment")
+	return cluster
+}
+
 // clientOptions are the options every library client needs for this deployment (ClusterModeOSS for
 // a cluster, nothing for standalone).
 func (r *testRedis) clientOptions() []impl.RecoverableRedisOption {
@@ -103,7 +111,9 @@ func (r *testRedis) reset(t testing.TB) {
 		require.NoError(t, cluster.ForEachSlave(ctx, clearConfig))
 		return
 	}
-	require.NoError(t, wipe(ctx, client.(*redisgo.Client)))
+	standalone, ok := client.(*redisgo.Client)
+	require.True(t, ok, "expected a standalone client")
+	require.NoError(t, wipe(ctx, standalone))
 }
 
 // setupSuite returns the Redis deployment for a test. It uses REDIS_CLUSTER_ADDRS or REDIS_ADDR when

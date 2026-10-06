@@ -1064,7 +1064,7 @@ func createConsumer(name string, redisContainer *testRedis, opts ...impl.Recover
 }
 
 // crash simulates the consumer's process dying: besides the lock heartbeat stopping (cancel the
-// context passed to Init), its Redis connections are torn down. Cancelling the context alone is not
+// context passed to Init), its Redis connections are torn down. Canceling the context alone is not
 // enough, because the consumer's blocked XREADGROUP stays parked on the server and would swallow the
 // next message added to the LBS stream, such as the re-queue of its own dead work.
 func crash(client types.RedisStreamClient) {
