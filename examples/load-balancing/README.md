@@ -8,7 +8,7 @@ This example demonstrates how multiple consumers work together to process stream
 - Load balancing of stream assignments across consumers
 - Producer generating continuous stream of messages
 - Statistics and monitoring of consumer performance
-- Automatic claiming of streams from failed consumers
+- Automatic recovery (re-queue + redistribution) of streams from failed consumers
 - Handling all notification types including StreamTerminated
 
 ## Architecture
@@ -125,7 +125,7 @@ Each consumer reports:
 - Processing times and completion status
 
 ### 4. Failure Recovery
-If you kill a consumer (Ctrl+C), other consumers will automatically claim its unprocessed streams.
+If you kill a consumer (Ctrl+C), its unprocessed streams are recovered — re-queued (`XACK` + `XADD`) by the periodic reconciliation scan (and, as a fast path, when another consumer handles the `StreamExpired` keyspace notification) — and redistributed to the remaining consumers.
 
 ### 5. Graceful Shutdown
 The `NotificationBroker` ensures:
@@ -143,7 +143,7 @@ The `NotificationBroker` ensures:
 ### Scenario 2: Consumer Failure
 1. Start 3 consumers and producer
 2. Kill one consumer (Ctrl+C)
-3. Observe other consumers claiming the failed consumer's streams
+3. Observe the failed consumer's streams being recovered and redistributed to other consumers
 
 ### Scenario 3: Dynamic Scaling
 1. Start with 1 consumer and producer
@@ -195,10 +195,10 @@ case notifs.StreamAdded:
     // notification.AdditionalInfo contains the Info field from LBSInputMessage
     go handleStreamAdded(ctx, client, notification, &processedStreams, &streamCount)
 
-// Handle claiming from failed consumer
+// Re-queue a failed consumer's stream for redistribution. The recovered stream returns as
+// StreamAdded (handled above); do not process it here. Optional — the periodic scan recovers it too.
 case notifs.StreamExpired:
     client.Claim(ctx, notification.Payload)
-    go handleClaimedStream(ctx, client, notification.Payload.DataStreamName, &processedStreams, &streamCount)
 
 // Handle channel termination
 case notifs.StreamTerminated:

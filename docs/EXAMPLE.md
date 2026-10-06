@@ -10,6 +10,7 @@ package main
 import (
     "context"
     "encoding/json"
+    "errors"
     "log/slog"
     "os"
     "os/signal"
@@ -20,7 +21,7 @@ import (
     "github.com/handcoding-labs/redis-stream-client-go/impl"
     "github.com/handcoding-labs/redis-stream-client-go/notifs"
     "github.com/handcoding-labs/redis-stream-client-go/types"
-    "github.com/go-redis/redis/v9/rediserr"
+    "github.com/handcoding-labs/redis-stream-client-go/types/errs"
 )
 
 func main() {
@@ -65,17 +66,18 @@ func main() {
         for notification := range outputChan {
             switch notification.Type {
             case notifs.StreamAdded:
+                // Fires for fresh streams and for recovered (re-queued) ones.
                 slog.Info("New stream assigned", 
                     "stream", notification.Payload.DataStreamName)
                 go processStream(ctx, client, notification)
 
             case notifs.StreamExpired:
+                // Re-queue the expired stream for redistribution. Do NOT process here — it will
+                // come back as StreamAdded when picked up. (Optional: the periodic reconciliation
+                // scan recovers it even without this handler.)
                 if err := client.Claim(ctx, notification.Payload); err != nil {
-                    slog.Warn("Failed to claim stream", "error", err)
-                } else {
-                    slog.Info("Claimed expired stream", 
+                    slog.Debug("stream already recovered elsewhere",
                         "stream", notification.Payload.DataStreamName)
-                    go processStream(ctx, client, notification)
                 }
 
             case notifs.StreamDisowned:
@@ -95,7 +97,7 @@ func main() {
     // Wait for shutdown signal
     <-sigChan
     slog.Info("Shutting down...")
-    client.Done()
+    client.Done(ctx)
     slog.Info("Shutdown complete")
 }
 
@@ -114,7 +116,7 @@ func processStream(
 
     // Mark stream as done - releases lock and acknowledges LBS message
     if err := client.DoneStream(ctx, streamName); err != nil {
-        if errors.Is(err, rediserr.ErrStreamNotFound) {
+        if errors.Is(err, errs.ErrDataStreamNotFound) {
             slog.Warn("Stream not found", "stream", streamName)
         } else {
             slog.Error("Failed to mark stream done", "error", err, "stream", streamName)
@@ -190,16 +192,15 @@ workerPool := make(chan struct{}, maxWorkers)
 
 for notification := range outputChan {
     switch notification.Type {
-    case notifs.StreamAdded, notifs.StreamExpired:
+    case notifs.StreamExpired:
+        // Re-queue for redistribution; the re-queued stream is processed when it arrives as
+        // StreamAdded below. No worker slot needed.
+        _ = client.Claim(ctx, notification.Payload)
+
+    case notifs.StreamAdded:
         workerPool <- struct{}{} // Acquire worker slot
         go func(n notifs.RecoverableRedisNotification) {
             defer func() { <-workerPool }() // Release slot
-            
-            if n.Type == notifs.StreamExpired {
-                if err := client.Claim(ctx, n.Payload); err != nil {
-                    return
-                }
-            }
             processStream(ctx, client, n)
         }(notification)
     }
@@ -234,7 +235,7 @@ func processStreamWithTimeout(
         client.DoneStream(ctx, streamName)
     case <-ctx.Done():
         slog.Warn("Processing timeout", "stream", streamName)
-        // Lock will expire, another consumer will claim
+        // Lock will expire; the periodic reconciliation scan (or another consumer) will recover it
     }
 }
 ```

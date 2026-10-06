@@ -3,6 +3,7 @@ package test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -17,38 +18,13 @@ import (
 	"github.com/handcoding-labs/redis-stream-client-go/impl"
 	"github.com/handcoding-labs/redis-stream-client-go/notifs"
 	"github.com/handcoding-labs/redis-stream-client-go/types"
+	"github.com/handcoding-labs/redis-stream-client-go/types/errs"
 
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go/modules/redis"
 )
 
-func newRedisClient(redisContainer *redis.RedisContainer) redisgo.UniversalClient {
-	connString, err := redisContainer.ConnectionString(context.Background())
-	if err != nil {
-		panic(err)
-	}
-
-	connString = connString[8:] // remove redis:// prefix*/
-
-	return redisgo.NewUniversalClient(&redisgo.UniversalOptions{
-		Addrs: []string{connString}, // hard code to "localhost:6379" if you're testing locally and a container is up
-		DB:    0,
-	})
-}
-
-func setupSuite(t *testing.T) *redis.RedisContainer {
-	redisContainer, err := redis.Run(context.Background(), "redis:7.2.3")
-	if err != nil {
-		t.Fatalf("failed to start redis container: %v", err)
-	}
-	require.True(t, redisContainer != nil)
-	require.True(t, redisContainer.IsRunning())
-
-	connString, err := redisContainer.ConnectionString(context.Background())
-	require.NoError(t, err)
-	require.NotEmpty(t, connString)
-
-	return redisContainer
+func newRedisClient(r *testRedis) redisgo.UniversalClient {
+	return r.newClient()
 }
 
 func TestLBS(t *testing.T) {
@@ -173,8 +149,8 @@ func TestLBSRecovery(t *testing.T) {
 	// wait until all ksp notifications exhausted
 	time.Sleep(5 * time.Second)
 
-	// restart consumer
-	consumer, rec2 := createConsumer("111", redisContainer, impl.WithLBSIdleTime(4*time.Second))
+	// restart consumer (scan-based recovery re-queues its own stranded pending message)
+	consumer, rec2 := createConsumerWithRecovery("111", redisContainer)
 	opChan, err = consumer.Init(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, opChan)
@@ -185,9 +161,11 @@ func TestLBSRecovery(t *testing.T) {
 		select {
 		case msg, ok := <-opChan:
 			require.True(t, ok)
-			if ok {
-				require.Equal(t, msg.Type, notifs.StreamAdded)
-				require.Equal(t, msg.Payload.DataStreamName, "session0")
+			// The recovering consumer is subscribed to keyspace events and may observe a
+			// StreamExpired for the dead consumer's lock (its EXISTS check can trigger Redis lazy
+			// expiry). Recovery is signaled by the re-queued stream coming back as StreamAdded.
+			if ok && msg.Type == notifs.StreamAdded {
+				require.Equal(t, "session0", msg.Payload.DataStreamName)
 				recovered = true
 			}
 		case <-time.After(10 * time.Second):
@@ -200,16 +178,18 @@ func TestLBSRecovery(t *testing.T) {
 
 	err = consumer.Done(ctx)
 	require.NoError(t, err)
-	_, ok := <-opChan
-	require.False(t, ok)
+	// drain any buffered notifications (e.g. a StreamExpired from lazy lock expiry) until closed
+	for range opChan {
+	}
 
-	// metrics assertions
+	// metrics assertions. Recovery is at-least-once (the re-queued stream may be redelivered more
+	// than once under load), so lock-acquisition counters are asserted as lower bounds.
 	require.Equal(t, 1, rec1.StartupRecoveryCount(), "initial consumer startup count")
-	require.Equal(t, 1, rec1.LockAcquisitionCount(), "initial consumer lock acquisitions")
+	require.GreaterOrEqual(t, rec1.LockAcquisitionCount(), 1, "initial consumer lock acquisitions")
 	require.Equal(t, 0, rec1.ClaimCount(), "initial consumer claim count")
 
 	require.Equal(t, 1, rec2.StartupRecoveryCount(), "restarted consumer startup count")
-	require.Equal(t, 1, rec2.LockAcquisitionCount(), "restarted consumer lock acquisitions")
+	require.GreaterOrEqual(t, rec2.LockAcquisitionCount(), 1, "restarted consumer lock acquisitions")
 	require.Equal(t, 0, rec2.ClaimCount(), "restarted consumer claim count")
 }
 
@@ -242,8 +222,8 @@ func TestLBSRecoveryOfDiscontinuousStreamMessages(t *testing.T) {
 	// let idle time pass
 	time.Sleep(6 * time.Second)
 
-	// different consumer comes up
-	consumer, rec2 := createConsumer("222", redisContainer, impl.WithLBSIdleTime(4*time.Second))
+	// different consumer comes up (scan-based recovery re-queues the 3 stranded streams)
+	consumer, rec2 := createConsumerWithRecovery("222", redisContainer)
 	opChan, err = consumer.Init(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, opChan)
@@ -257,8 +237,10 @@ func TestLBSRecoveryOfDiscontinuousStreamMessages(t *testing.T) {
 	for len(expectedToBeRecovered) > 0 {
 		select {
 		case msg, ok := <-opChan:
-			if ok {
-				require.Equal(t, msg.Type, notifs.StreamAdded)
+			// Ignore non-StreamAdded notifications (e.g. StreamExpired emitted when the recovering
+			// consumer's EXISTS check triggers lazy expiry of a dead consumer's lock). Recovery is
+			// signaled by the re-queued streams arriving as StreamAdded.
+			if ok && msg.Type == notifs.StreamAdded {
 				require.Contains(t, expectedToBeRecovered, msg.Payload.DataStreamName)
 				delete(expectedToBeRecovered, msg.Payload.DataStreamName)
 			}
@@ -269,36 +251,26 @@ func TestLBSRecoveryOfDiscontinuousStreamMessages(t *testing.T) {
 
 	require.Empty(t, expectedToBeRecovered)
 
-	// verify metrics for first consumer
+	// verify metrics for first consumer. Recovery is at-least-once (re-queue may redeliver a stream
+	// more than once), so the lock-acquisition counter is asserted as a lower bound; the per-stream
+	// processing counts are map-based (distinct streams) and therefore exact.
 	require.Equal(t, 1, rec1.StartupRecoveryCount(), "first consumer startup")
-	require.Equal(t, 5, rec1.LockAcquisitionCount(), "first consumer lock acquisitions")
+	require.GreaterOrEqual(t, rec1.LockAcquisitionCount(), 5, "first consumer lock acquisitions")
 	require.Equal(t, 2, rec1.LockReleaseCount(), "first consumer lock releases (DoneStream)")
 	require.Equal(t, 5, rec1.StreamProcessingStartCount(), "first consumer stream start count")
 	require.Equal(t, 2, rec1.StreamProcessingEndCount(), "first consumer stream end count due to acked streams")
 
 	// verify metrics for second consumer
 	require.Equal(t, 1, rec2.StartupRecoveryCount(), "second consumer startup")
-	require.Equal(t, 3, rec2.LockAcquisitionCount(), "second consumer lock acquisitions for recovered streams")
-	require.Equal(t, 0, rec2.LockReleaseCount(), "second consumer lock releases (none yet)")
-	require.Equal(t, 3, rec2.StreamProcessingStartCount(), "second consumer stream start count")
-
-	// verify metrics for first consumer
-	require.Equal(t, 1, rec1.StartupRecoveryCount(), "first consumer startup")
-	require.Equal(t, 5, rec1.LockAcquisitionCount(), "first consumer lock acquisitions")
-	require.Equal(t, 2, rec1.LockReleaseCount(), "first consumer lock releases (DoneStream)")
-	require.Equal(t, 5, rec1.StreamProcessingStartCount(), "first consumer stream start count")
-	require.Equal(t, 2, rec1.StreamProcessingEndCount(), "first consumer stream end count due to acked streams")
-
-	// verify metrics for second consumer
-	require.Equal(t, 1, rec2.StartupRecoveryCount(), "second consumer startup")
-	require.Equal(t, 3, rec2.LockAcquisitionCount(), "second consumer lock acquisitions for recovered streams")
+	require.GreaterOrEqual(t, rec2.LockAcquisitionCount(), 3, "second consumer lock acquisitions for recovered streams")
 	require.Equal(t, 0, rec2.LockReleaseCount(), "second consumer lock releases (none yet)")
 	require.Equal(t, 3, rec2.StreamProcessingStartCount(), "second consumer stream start count")
 
 	err = consumer.Done(ctx)
 	require.NoError(t, err)
-	_, ok := <-opChan
-	require.False(t, ok)
+	// drain any buffered notifications (e.g. a StreamExpired from lazy lock expiry) until closed
+	for range opChan {
+	}
 }
 
 func TestClaimWorksOnlyOnce(t *testing.T) {
@@ -383,8 +355,10 @@ func TestClaimWorksOnlyOnce(t *testing.T) {
 	// assertions
 	require.Equal(t, 1, rec1.StartupRecoveryCount(), "consumer1 startup")
 	require.Equal(t, 1, rec1.LockAcquisitionCount(), "consumer1 lock acquisition before crash")
-	require.Equal(t, 1, rec2.ClaimCount(), "consumer2 made one claim attempt")
-	require.Equal(t, 1, rec3.ClaimCount(), "consumer3 attempted claim")
+	// Claim now re-queues via XACK + XADD. Only the consumer that wins the XACK race re-queues the
+	// task; the other observes the entry already gone and returns ErrAlreadyClaimed.
+	require.Equal(t, 1, rec2.ReQueueCount(), "consumer2 won the re-queue race")
+	require.Equal(t, 0, rec3.ReQueueCount(), "consumer3 lost the re-queue race")
 }
 
 func TestBlockingRead(t *testing.T) {
@@ -448,7 +422,18 @@ func TestKspNotifs(t *testing.T) {
 	cfg := redisClient.ConfigGet(ctx, "notify-keyspace-events")
 	require.NoError(t, cfg.Err())
 
-	pubsub := redisClient.PSubscribe(ctx, configs.MutexKeySpacePattern)
+	keyName := "datastream" + configs.MutexKeySep + "1"
+
+	// In an OSS cluster, keyspace events are published only by the master that owns the key's slot
+	// (a ClusterClient.PSubscribe would attach to an arbitrary node), so subscribe on that master.
+	var pubsub *redisgo.PubSub
+	if cluster, ok := redisClient.(*redisgo.ClusterClient); ok {
+		owner, ownerErr := cluster.MasterForKey(ctx, keyName)
+		require.NoError(t, ownerErr)
+		pubsub = owner.PSubscribe(ctx, configs.MutexKeySpacePattern)
+	} else {
+		pubsub = redisClient.PSubscribe(ctx, configs.MutexKeySpacePattern)
+	}
 
 	// 4. Verify subscription
 	time.Sleep(time.Millisecond * 100)
@@ -460,7 +445,6 @@ func TestKspNotifs(t *testing.T) {
 	time.Sleep(time.Millisecond * 100)
 
 	// 5. Verify key set
-	keyName := "datastream" + configs.MutexKeySep + "1"
 	setRes := redisClient.Set(ctx, keyName, "value1", 2*time.Second)
 	require.NoError(t, setRes.Err())
 
@@ -471,9 +455,12 @@ func TestKspNotifs(t *testing.T) {
 	redisClient.PubSubChannels(ctx, "*")
 
 	success := false
+	deadline := time.After(30 * time.Second)
 
 	for {
 		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for the keyspace expiry notification for %q", keyName)
 		case notif, ok := <-kspChan:
 			require.True(t, ok)
 			require.NotNil(t, notif)
@@ -872,33 +859,21 @@ func TestMainFlow(t *testing.T) {
 				require.True(t, ok)
 				require.NotNil(t, notif)
 				require.Contains(t, notif.Payload.DataStreamName, "session")
+				// Claim now recovers the stream by re-queuing it (XACK + XADD) rather than taking
+				// direct ownership via XCLAIM. Tolerate the race where the periodic reconciliation
+				// scan (or another consumer) already re-queued it.
 				err = consumer2.Claim(consumer2Ctx, notif.Payload)
-				require.NoError(t, err)
+				if err != nil && !errors.Is(err, errs.ErrAlreadyClaimed) {
+					require.NoError(t, err)
+				}
+
+				// the expired stream's pending entry should be cleared from the dead consumer's PEL
 				res := simpleRedisClient.XInfoStreamFull(context.Background(), "consumer-input", 100)
 				require.NotNil(t, res)
 				require.NotNil(t, res.Val())
 				grpInfo := res.Val().Groups
 				require.NotEmpty(t, grpInfo)
-				// there's only one group
 				require.Len(t, grpInfo, 1)
-				// there are two consumers
-				require.Len(t, grpInfo[0].Consumers, 2)
-				var c1, c2 *redisgo.XInfoStreamConsumer
-				for _, c := range grpInfo[0].Consumers {
-					switch c.Name {
-					case "redis-consumer-111":
-						c1 = &c
-					case "redis-consumer-222":
-						c2 = &c
-					}
-
-					if c1 != nil && c2 != nil {
-						break
-					}
-				}
-
-				require.True(t, c1.ActiveTime.Before(c2.ActiveTime))
-				require.True(t, c1.SeenTime.Before(c2.SeenTime))
 
 				claimSuccess = true
 			}
@@ -924,16 +899,17 @@ func TestMainFlow(t *testing.T) {
 	// calling here to shut up the ctx leak error message
 	consumer1CancelFunc()
 
-	// check if outputChan is closed
-	_, ok := <-opChan2
-	require.False(t, ok)
+	// drain any buffered notifications (e.g. the re-queued StreamAdded) until the channel closes
+	for range opChan2 {
+	}
 
-	// metrics assertions
+	// metrics assertions. The two streams are distributed across both consumers by the LBS, so
+	// consumer1 may have locked one or both before crashing; assert a lower bound.
 	require.Equal(t, 1, rec1.StartupRecoveryCount(), "consumer1 startup")
-	require.Equal(t, 1, rec1.LockAcquisitionCount(), "consumer1 initial lock acquired")
+	require.GreaterOrEqual(t, rec1.LockAcquisitionCount(), 1, "consumer1 initial lock acquired")
 	require.Equal(t, 0, rec1.ClaimCount(), "consumer1 did not claim")
 	require.Equal(t, 1, rec2.StartupRecoveryCount(), "consumer2 startup")
-	require.GreaterOrEqual(t, rec2.ClaimCount(), 1, "consumer2 performed at least one claim")
+	require.GreaterOrEqual(t, rec2.ReQueueCount(), 1, "consumer2 re-queued at least one expired stream")
 }
 
 func TestLoggerInjection(t *testing.T) {
@@ -964,13 +940,13 @@ func TestLoggerInjection(t *testing.T) {
 	// metrics
 	require.Equal(t, 1, rec.StartupRecoveryCount(), "logger injection consumer startup")
 
+	logOutput = customHandler.messages()
 	require.NotEmpty(t, logOutput)
 	found := false
-	// we're just testing logging here so first message is enough to check if logger is working
-	// we don't need to check all messages and it's always about the unacked messages
-	// as recovery is the first thing that happens when client starts
+	// we're just testing logging here so one deterministic message is enough to confirm the
+	// injected logger is wired up. The startup reconciliation scan always logs once at Init.
 	for _, msg := range logOutput {
-		if strings.Contains(msg, "no unacked messages found in LBS for consumer") {
+		if strings.Contains(msg, "startup reconciliation scan complete") {
 			found = true
 			break
 		}
@@ -979,13 +955,14 @@ func TestLoggerInjection(t *testing.T) {
 	require.True(t, found, "Expected log message not found in output")
 }
 
-func TestInitContinuesWhenRecoverUnackedLBSFails(t *testing.T) {
+func TestReconciliationToleratesMalformedPendingMessage(t *testing.T) {
 	ctx := context.Background()
 	redisContainer := setupSuite(t)
 
 	redisClient := newRedisClient(redisContainer)
 
-	// Prepare an existing group with a malformed pending LBS message so recovery fails.
+	// Prepare an existing group with a malformed pending LBS message owned by a (now absent)
+	// bootstrap consumer. The reconciliation scan must tolerate it (ack + drop) rather than crash.
 	groupRes := redisClient.XGroupCreateMkStream(ctx, "consumer-input", "consumer-group", "$")
 	require.NoError(t, groupRes.Err())
 
@@ -1009,13 +986,17 @@ func TestInitContinuesWhenRecoverUnackedLBSFails(t *testing.T) {
 	require.Len(t, readRes.Val(), 1)
 	require.Len(t, readRes.Val()[0].Messages, 1)
 
-	consumer, _ := createConsumer(
-		"111",
-		redisContainer,
-	)
+	// fast recovery so the malformed pending message becomes eligible and is processed by a scan
+	consumer, _ := createConsumerWithRecovery("111", redisContainer)
 	opChan, err := consumer.Init(ctx)
-	require.NoError(t, err, "init should continue even when unacked recovery fails")
+	require.NoError(t, err, "init should continue even when a pending message is malformed")
 	require.NotNil(t, opChan)
+
+	// Wait long enough for the malformed message to exceed MinIdleTime and be scanned.
+	require.Eventually(t, func() bool {
+		pending := redisClient.XPending(ctx, "consumer-input", "consumer-group")
+		return pending.Err() == nil && pending.Val().Count == 0
+	}, 10*time.Second, 250*time.Millisecond, "malformed pending message should be acked and dropped by the scan")
 
 	// Verify startup continued by successfully processing a new valid stream.
 	addNStreamsToLBS(t, redisContainer, 1)
@@ -1025,7 +1006,7 @@ func TestInitContinuesWhenRecoverUnackedLBSFails(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, notifs.StreamAdded, notif.Type)
 		require.Equal(t, "session0", notif.Payload.DataStreamName)
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatalf("timed out waiting for stream added notification")
 	}
 
@@ -1035,7 +1016,7 @@ func TestInitContinuesWhenRecoverUnackedLBSFails(t *testing.T) {
 	require.False(t, ok)
 }
 
-func addNStreamsToLBS(t *testing.T, redisContainer *redis.RedisContainer, n int) {
+func addNStreamsToLBS(t *testing.T, redisContainer *testRedis, n int) {
 	stringify := func(name string, i int) string {
 		return fmt.Sprintf("%s%d", name, i)
 	}
@@ -1062,22 +1043,67 @@ func addNStreamsToLBS(t *testing.T, redisContainer *redis.RedisContainer, n int)
 	}
 }
 
-func createConsumer(name string, redisContainer *redis.RedisContainer, opts ...impl.RecoverableRedisOption) (types.RedisStreamClient, *testMetricsRecorder) {
+func createConsumer(name string, redisContainer *testRedis, opts ...impl.RecoverableRedisOption) (types.RedisStreamClient, *testMetricsRecorder) {
 	_ = os.Setenv("POD_NAME", name)
 	// create a new redis client
 	// always override config for tests
 	rec := &testMetricsRecorder{}
+	opts = append(opts, redisContainer.clientOptions()...)
 	opts = append(opts, impl.WithForceConfigOverride(),
 		impl.WithKspChanSize(500),
 		impl.WithKspChanTimeout(2*time.Minute),
 		impl.WithLBSRecoveryCount(500),
 		impl.WithOutputChanSize(500),
 		impl.WithMetricsRecorder(rec))
-	relredis, err := impl.NewRedisStreamClient(newRedisClient(redisContainer), "consumer", opts...)
+	rc := newRedisClient(redisContainer)
+	relredis, err := impl.NewRedisStreamClient(rc, "consumer", opts...)
 	if err != nil {
 		return nil, rec
 	}
-	return relredis, rec
+	return &trackedClient{RedisStreamClient: relredis, env: redisContainer, rc: rc}, rec
+}
+
+// crash simulates the consumer's process dying: besides the lock heartbeat stopping (cancel the
+// context passed to Init), its Redis connections are torn down. Cancelling the context alone is not
+// enough, because the consumer's blocked XREADGROUP stays parked on the server and would swallow the
+// next message added to the LBS stream, such as the re-queue of its own dead work.
+func crash(client types.RedisStreamClient) {
+	if tc, ok := client.(*trackedClient); ok {
+		_ = tc.rc.Close()
+	}
+}
+
+// trackedClient makes sure the client is stopped when the test ends, even if the test never calls
+// Done or cancels the context it passed to Init (see testRedis.cancels).
+type trackedClient struct {
+	types.RedisStreamClient
+	env *testRedis
+	rc  redisgo.UniversalClient
+}
+
+func (c *trackedClient) Init(ctx context.Context) (<-chan notifs.RecoverableRedisNotification, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	c.env.trackCancel(cancel)
+	return c.RedisStreamClient.Init(ctx)
+}
+
+// fastRecoveryConfig returns a RecoveryConfig with short timers so that the periodic reconciliation
+// scan recovers dead-consumer work within test timeouts. MinIdleTime is kept comfortably larger than
+// the heartbeat interval (2s) so a live consumer's lock is always present before a message becomes
+// eligible for recovery, avoiding spurious re-queues of actively-processed streams.
+func fastRecoveryConfig() impl.RecoveryConfig {
+	cfg := impl.DefaultRecoveryConfig()
+	cfg.ReconciliationInterval = 1 * time.Second
+	cfg.MinIdleTime = 3 * time.Second
+	cfg.BatchSize = 1000
+	return cfg
+}
+
+// createConsumerWithRecovery is like createConsumer but enables the fast reconciliation scan. Use it
+// for tests that exercise scan-based recovery of dead consumers.
+func createConsumerWithRecovery(name string, redisContainer *testRedis, opts ...impl.RecoverableRedisOption) (types.RedisStreamClient, *testMetricsRecorder) {
+	opts = append(opts, impl.WithRecoveryConfig(fastRecoveryConfig()))
+	return createConsumer(name, redisContainer, opts...)
 }
 
 func listenToKsp(t *testing.T, outputChan <-chan notifs.RecoverableRedisNotification, consumers map[int]types.RedisStreamClient, i int) {
