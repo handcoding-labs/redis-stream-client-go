@@ -158,6 +158,67 @@ jobs:
             coverage.out
             coverage.html
 
+  # Integration tests against a real OSS Redis Cluster (3 masters + 3 replicas on localhost).
+  # The "test" job above runs against a standalone Redis container and skips the cluster-only tests;
+  # this job points the whole suite at a cluster instead (see test/scripts/redis-cluster.sh), which
+  # also exercises failover, per-master keyspace subscriptions and ResetTopology.
+  test-cluster:
+    name: Test (Redis Cluster)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      REDIS_CLUSTER_ADDRS: 127.0.0.1:7000,127.0.0.1:7001,127.0.0.1:7002
+      CLUSTER_DIR: ${{ runner.temp }}/redis-cluster
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.4.0
+        with:
+          go-version-file: go.mod
+
+      - name: Cache Go modules
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Install Redis
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends redis-server
+          # the cluster nodes are started by the script; don't leave the packaged service running
+          sudo systemctl disable --now redis-server || true
+          redis-server --version
+
+      - name: Start Redis Cluster
+        run: test/scripts/redis-cluster.sh start
+
+      - name: Run tests against the cluster
+        run: go test -v -race -count=1 -timeout 15m ./test/...
+
+      - name: Show Redis node logs on failure
+        if: failure()
+        run: |
+          redis-cli -p 7000 cluster nodes || true
+          for f in "$CLUSTER_DIR"/*/redis.log; do
+            echo "::group::$f"
+            tail -n 100 "$f"
+            echo "::endgroup::"
+          done
+
+      - name: Stop Redis Cluster
+        if: always()
+        run: test/scripts/redis-cluster.sh stop
+
   # Benchmark tests
   benchmark:
     name: Benchmark Tests

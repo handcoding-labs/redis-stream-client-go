@@ -83,6 +83,24 @@ test(integration): add bulk notification tests
 - **Unit Tests**: Should be created alongside source files (e.g., `impl/client_test.go`)
 - **Benchmarks**: Performance tests for critical paths
 
+### Running Against a Redis Cluster
+
+The suite runs against a standalone Redis container by default. Tests that need a real OSS Redis
+Cluster (failover, per-master keyspace subscriptions, `ResetTopology`) are skipped unless
+`REDIS_CLUSTER_ADDRS` is set. A local 3-master/3-replica cluster needs only `redis-server` (no Docker):
+
+```bash
+make test-cluster
+# or, to keep the cluster up between runs:
+test/scripts/redis-cluster.sh start
+REDIS_CLUSTER_ADDRS=127.0.0.1:7000,127.0.0.1:7001,127.0.0.1:7002 go test -race ./test/...
+test/scripts/redis-cluster.sh stop
+```
+
+`REDIS_ADDR=host:port` points the suite at an existing standalone server instead, and
+`-tags nocontainers` builds the suite without the testcontainers dependency. CI runs this cluster
+job as `Test (Redis Cluster)`.
+
 ### Writing Tests
 
 1. **Test Naming**: Use descriptive names
