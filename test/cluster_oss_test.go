@@ -1,7 +1,7 @@
 package test
 
 // Tests in this file need a real OSS Redis Cluster (REDIS_CLUSTER_ADDRS, see
-// test/scripts/redis-cluster.sh) and are skipped otherwise. They cover behaviour that a standalone
+// test/scripts/redis-cluster.sh) and are skipped otherwise. They cover behavior that a standalone
 // server cannot exhibit: lock keys and keyspace events spread across masters, per-master
 // subscriptions, and topology changes.
 
@@ -190,7 +190,7 @@ func TestOSSClusterRecoversStreamsLockedOnEveryMaster(t *testing.T) {
 	}
 
 	// the lock keys must really be spread across all masters, otherwise this test proves nothing
-	cluster := cl.newClient().(*redisgo.ClusterClient)
+	cluster := cl.newClusterClient(t)
 	defer cluster.Close()
 	lockOwners := make(map[string]bool)
 	for _, info := range held {
@@ -253,7 +253,7 @@ func TestOSSClusterSubscriptionsAreNotLeaked(t *testing.T) {
 	cl := requireCluster(t)
 	ctx := context.Background()
 
-	cluster := cl.newClient().(*redisgo.ClusterClient)
+	cluster := cl.newClusterClient(t)
 	defer cluster.Close()
 
 	// Subscriptions left behind by earlier tests whose clients were stopped without Done are still
@@ -303,12 +303,12 @@ func TestOSSClusterInitRefusesExistingConfigWithoutOverride(t *testing.T) {
 	ctx := context.Background()
 	_ = os.Setenv("POD_NAME", "no-override")
 
-	cluster := cl.newClient().(*redisgo.ClusterClient)
+	cluster := cl.newClusterClient(t)
 	defer cluster.Close()
 	require.NoError(t, cluster.ForEachMaster(ctx, func(ctx context.Context, m *redisgo.Client) error {
 		return m.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, "Kg").Err()
 	}))
-	// Redis normalises the flag order, so remember what each master reports rather than what we set
+	// Redis normalizes the flag order, so remember what each master reports rather than what we set
 	var mu sync.Mutex
 	before := make(map[string]string)
 	require.NoError(t, cluster.ForEachMaster(ctx, func(ctx context.Context, m *redisgo.Client) error {
@@ -370,7 +370,7 @@ func TestOSSClusterFailoverThenResetTopology(t *testing.T) {
 	ctx := context.Background()
 
 	// closed via t.Cleanup (not defer) so it is still open while the failback cleanup below runs
-	cluster := cl.newClient().(*redisgo.ClusterClient)
+	cluster := cl.newClusterClient(t)
 	t.Cleanup(func() { _ = cluster.Close() })
 
 	var shard clusterShard
@@ -436,7 +436,7 @@ func TestOSSClusterKeyspaceSetupMetrics(t *testing.T) {
 	cl := requireCluster(t)
 	ctx := context.Background()
 
-	cluster := cl.newClient().(*redisgo.ClusterClient)
+	cluster := cl.newClusterClient(t)
 	defer cluster.Close()
 	masters := len(clusterShards(t, cluster))
 
@@ -460,7 +460,7 @@ func TestOSSClusterLocksSurviveGracefulFailover(t *testing.T) {
 	ctx := context.Background()
 	const numStreams = 12
 
-	cluster := cl.newClient().(*redisgo.ClusterClient)
+	cluster := cl.newClusterClient(t)
 	t.Cleanup(func() { _ = cluster.Close() })
 
 	holder, holderRec := createConsumerWithRecovery("111", cl)

@@ -395,7 +395,7 @@ func TestOSSClusterKeyspaceSubscription(t *testing.T) {
 	cl := requireCluster(t)
 
 	_ = os.Setenv("POD_NAME", "oss-111")
-	cluster := cl.newClient().(*redisgo.ClusterClient)
+	cluster := cl.newClusterClient(t)
 	defer cluster.Close()
 
 	require.NoError(t, cluster.Ping(context.Background()).Err())
