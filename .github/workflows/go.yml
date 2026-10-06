@@ -170,7 +170,6 @@ jobs:
       contents: read
     env:
       REDIS_CLUSTER_ADDRS: 127.0.0.1:7000,127.0.0.1:7001,127.0.0.1:7002
-      CLUSTER_DIR: ${{ runner.temp }}/redis-cluster
     steps:
       - name: Checkout code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -190,6 +189,10 @@ jobs:
 
       - name: Download dependencies
         run: go mod download
+
+      - name: Choose cluster data directory
+        # Set from the shell: the runner context is not available in job-level env.
+        run: echo "CLUSTER_DIR=$RUNNER_TEMP/redis-cluster" >> "$GITHUB_ENV"
 
       - name: Install Redis
         run: |
