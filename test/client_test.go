@@ -21,36 +21,10 @@ import (
 	"github.com/handcoding-labs/redis-stream-client-go/types/errs"
 
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go/modules/redis"
 )
 
-func newRedisClient(redisContainer *redis.RedisContainer) redisgo.UniversalClient {
-	connString, err := redisContainer.ConnectionString(context.Background())
-	if err != nil {
-		panic(err)
-	}
-
-	connString = connString[8:] // remove redis:// prefix*/
-
-	return redisgo.NewUniversalClient(&redisgo.UniversalOptions{
-		Addrs: []string{connString}, // hard code to "localhost:6379" if you're testing locally and a container is up
-		DB:    0,
-	})
-}
-
-func setupSuite(t *testing.T) *redis.RedisContainer {
-	redisContainer, err := redis.Run(context.Background(), "redis:7.2.3")
-	if err != nil {
-		t.Fatalf("failed to start redis container: %v", err)
-	}
-	require.True(t, redisContainer != nil)
-	require.True(t, redisContainer.IsRunning())
-
-	connString, err := redisContainer.ConnectionString(context.Background())
-	require.NoError(t, err)
-	require.NotEmpty(t, connString)
-
-	return redisContainer
+func newRedisClient(r *testRedis) redisgo.UniversalClient {
+	return r.newClient()
 }
 
 func TestLBS(t *testing.T) {
@@ -448,7 +422,18 @@ func TestKspNotifs(t *testing.T) {
 	cfg := redisClient.ConfigGet(ctx, "notify-keyspace-events")
 	require.NoError(t, cfg.Err())
 
-	pubsub := redisClient.PSubscribe(ctx, configs.MutexKeySpacePattern)
+	keyName := "datastream" + configs.MutexKeySep + "1"
+
+	// In an OSS cluster, keyspace events are published only by the master that owns the key's slot
+	// (a ClusterClient.PSubscribe would attach to an arbitrary node), so subscribe on that master.
+	var pubsub *redisgo.PubSub
+	if cluster, ok := redisClient.(*redisgo.ClusterClient); ok {
+		owner, ownerErr := cluster.MasterForKey(ctx, keyName)
+		require.NoError(t, ownerErr)
+		pubsub = owner.PSubscribe(ctx, configs.MutexKeySpacePattern)
+	} else {
+		pubsub = redisClient.PSubscribe(ctx, configs.MutexKeySpacePattern)
+	}
 
 	// 4. Verify subscription
 	time.Sleep(time.Millisecond * 100)
@@ -460,7 +445,6 @@ func TestKspNotifs(t *testing.T) {
 	time.Sleep(time.Millisecond * 100)
 
 	// 5. Verify key set
-	keyName := "datastream" + configs.MutexKeySep + "1"
 	setRes := redisClient.Set(ctx, keyName, "value1", 2*time.Second)
 	require.NoError(t, setRes.Err())
 
@@ -471,9 +455,12 @@ func TestKspNotifs(t *testing.T) {
 	redisClient.PubSubChannels(ctx, "*")
 
 	success := false
+	deadline := time.After(30 * time.Second)
 
 	for {
 		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for the keyspace expiry notification for %q", keyName)
 		case notif, ok := <-kspChan:
 			require.True(t, ok)
 			require.NotNil(t, notif)
@@ -1028,7 +1015,7 @@ func TestReconciliationToleratesMalformedPendingMessage(t *testing.T) {
 	require.False(t, ok)
 }
 
-func addNStreamsToLBS(t *testing.T, redisContainer *redis.RedisContainer, n int) {
+func addNStreamsToLBS(t *testing.T, redisContainer *testRedis, n int) {
 	stringify := func(name string, i int) string {
 		return fmt.Sprintf("%s%d", name, i)
 	}
@@ -1055,11 +1042,12 @@ func addNStreamsToLBS(t *testing.T, redisContainer *redis.RedisContainer, n int)
 	}
 }
 
-func createConsumer(name string, redisContainer *redis.RedisContainer, opts ...impl.RecoverableRedisOption) (types.RedisStreamClient, *testMetricsRecorder) {
+func createConsumer(name string, redisContainer *testRedis, opts ...impl.RecoverableRedisOption) (types.RedisStreamClient, *testMetricsRecorder) {
 	_ = os.Setenv("POD_NAME", name)
 	// create a new redis client
 	// always override config for tests
 	rec := &testMetricsRecorder{}
+	opts = append(opts, redisContainer.clientOptions()...)
 	opts = append(opts, impl.WithForceConfigOverride(),
 		impl.WithKspChanSize(500),
 		impl.WithKspChanTimeout(2*time.Minute),
@@ -1070,7 +1058,20 @@ func createConsumer(name string, redisContainer *redis.RedisContainer, opts ...i
 	if err != nil {
 		return nil, rec
 	}
-	return relredis, rec
+	return &trackedClient{RedisStreamClient: relredis, env: redisContainer}, rec
+}
+
+// trackedClient makes sure the client is stopped when the test ends, even if the test never calls
+// Done or cancels the context it passed to Init (see testRedis.cancels).
+type trackedClient struct {
+	types.RedisStreamClient
+	env *testRedis
+}
+
+func (c *trackedClient) Init(ctx context.Context) (<-chan notifs.RecoverableRedisNotification, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	c.env.trackCancel(cancel)
+	return c.RedisStreamClient.Init(ctx)
 }
 
 // fastRecoveryConfig returns a RecoveryConfig with short timers so that the periodic reconciliation
@@ -1087,7 +1088,7 @@ func fastRecoveryConfig() impl.RecoveryConfig {
 
 // createConsumerWithRecovery is like createConsumer but enables the fast reconciliation scan. Use it
 // for tests that exercise scan-based recovery of dead consumers.
-func createConsumerWithRecovery(name string, redisContainer *redis.RedisContainer, opts ...impl.RecoverableRedisOption) (types.RedisStreamClient, *testMetricsRecorder) {
+func createConsumerWithRecovery(name string, redisContainer *testRedis, opts ...impl.RecoverableRedisOption) (types.RedisStreamClient, *testMetricsRecorder) {
 	opts = append(opts, impl.WithRecoveryConfig(fastRecoveryConfig()))
 	return createConsumer(name, redisContainer, opts...)
 }

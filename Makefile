@@ -1,7 +1,7 @@
 # Redis Stream Client Go - Makefile
 # Common development tasks and build automation
 
-.PHONY: help build test test-integration test-unit test-coverage clean lint fmt vet deps deps-update security docker-build docker-test benchmark examples
+.PHONY: help build test test-integration test-cluster test-unit test-coverage clean lint fmt vet deps deps-update security docker-build docker-test benchmark examples
 
 # Default target
 .DEFAULT_GOAL := help
@@ -64,6 +64,15 @@ test-unit:
 test-integration:
 	@echo "Running integration tests..."
 	$(GOTEST) -v ./test/...
+
+## test-cluster: Run the integration suite against a local OSS Redis Cluster (needs redis-server, no Docker)
+# Set TEST_TAGS=nocontainers to build the suite without the testcontainers dependency.
+CLUSTER_ADDRS=127.0.0.1:7000,127.0.0.1:7001,127.0.0.1:7002
+test-cluster:
+	@echo "Running integration tests against a local Redis Cluster..."
+	test/scripts/redis-cluster.sh start
+	REDIS_CLUSTER_ADDRS=$(CLUSTER_ADDRS) $(GOTEST) -v -tags "$(TEST_TAGS)" ./test/...; status=$$?; \
+		test/scripts/redis-cluster.sh stop; exit $$status
 
 ## test-coverage: Run tests with coverage report
 test-coverage:

@@ -199,9 +199,11 @@ func TestRetryCountAndDLQRouting(t *testing.T) {
 	client, err := impl.NewRedisStreamClient(
 		newRedisClient(redisContainer),
 		"consumer",
-		impl.WithForceConfigOverride(),
-		impl.WithRecoveryConfig(cfg),
-		impl.WithMetricsRecorder(rec),
+		append(redisContainer.clientOptions(),
+			impl.WithForceConfigOverride(),
+			impl.WithRecoveryConfig(cfg),
+			impl.WithMetricsRecorder(rec),
+		)...,
 	)
 	require.NoError(t, err)
 
@@ -268,16 +270,13 @@ func TestClusterModeOSSRequiresClusterClient(t *testing.T) {
 	require.ErrorIs(t, err, errs.ErrClusterClientRequired)
 }
 
-// TestOSSClusterKeyspaceSubscription covers issue #115. It only runs when an OSS cluster is provided
-// via the REDIS_CLUSTER_ADDRS env var (comma-separated host:port list); otherwise it is skipped.
+// TestOSSClusterKeyspaceSubscription covers issue #115. It only runs against an OSS cluster
+// (REDIS_CLUSTER_ADDRS, see test/scripts/redis-cluster.sh) and is skipped otherwise.
 func TestOSSClusterKeyspaceSubscription(t *testing.T) {
-	addrs := os.Getenv("REDIS_CLUSTER_ADDRS")
-	if addrs == "" {
-		t.Skip("set REDIS_CLUSTER_ADDRS to a comma-separated list of OSS cluster nodes to run this test")
-	}
+	cl := requireCluster(t)
 
 	_ = os.Setenv("POD_NAME", "oss-111")
-	cluster := redisgo.NewClusterClient(&redisgo.ClusterOptions{Addrs: splitAndTrim(addrs)})
+	cluster := cl.newClient().(*redisgo.ClusterClient)
 	defer cluster.Close()
 
 	require.NoError(t, cluster.Ping(context.Background()).Err())
@@ -314,26 +313,4 @@ func TestOSSClusterKeyspaceSubscription(t *testing.T) {
 	require.GreaterOrEqual(t, rec.TopologyResetCount(), 1)
 
 	require.NoError(t, client.Done(context.Background()))
-}
-
-func splitAndTrim(csv string) []string {
-	var out []string
-	start := 0
-	for i := 0; i <= len(csv); i++ {
-		if i == len(csv) || csv[i] == ',' {
-			seg := csv[start:i]
-			// trim surrounding spaces
-			for len(seg) > 0 && seg[0] == ' ' {
-				seg = seg[1:]
-			}
-			for len(seg) > 0 && seg[len(seg)-1] == ' ' {
-				seg = seg[:len(seg)-1]
-			}
-			if seg != "" {
-				out = append(out, seg)
-			}
-			start = i + 1
-		}
-	}
-	return out
 }
