@@ -3,6 +3,7 @@ package test
 import (
 	"context"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -88,7 +89,14 @@ func TestMutexCheckPreventsDuplicateProcessingOfSlowConsumers(t *testing.T) {
 // TestXAckFirstDeduplicationAcrossConcurrentRecoverers covers issue #112.
 //
 // When a consumer dies, multiple other consumers may try to recover the same pending message
-// concurrently. The XACK-first ordering guarantees that exactly one of them re-queues the task.
+// concurrently. The XACK-first ordering guarantees that exactly one of them re-queues the task; the
+// others observe acked==0 and return ErrAlreadyClaimed.
+//
+// The test drives this deterministically by invoking Claim on the *same* stranded entry from two
+// consumers concurrently. Claim performs a single re-queue attempt (no scan loop), so the assertion
+// isolates the XACK-first dedup guarantee from the at-least-once re-queue churn a periodic scan can
+// introduce (a re-queued message being re-queued again before it is locked), which would otherwise
+// make a raw re-queue count non-deterministic.
 func TestXAckFirstDeduplicationAcrossConcurrentRecoverers(t *testing.T) {
 	ctx := context.Background()
 	victimCtx, killVictim := context.WithCancel(context.Background())
@@ -97,7 +105,8 @@ func TestXAckFirstDeduplicationAcrossConcurrentRecoverers(t *testing.T) {
 	redisClient := newRedisClient(redisContainer)
 	require.NoError(t, redisClient.ConfigSet(ctx, configs.NotifyKeyspaceEventsCmd, configs.KeyspacePatternForExpiredEvents).Err())
 
-	// victim consumer takes the stream (default config: its own scan won't interfere).
+	// victim consumer takes the stream, then dies. Default config everywhere so no periodic scan
+	// interferes — recovery is driven solely by the explicit concurrent Claim calls below.
 	victim, _ := createConsumer("000", redisContainer)
 	victimChan, err := victim.Init(victimCtx)
 	require.NoError(t, err)
@@ -106,12 +115,12 @@ func TestXAckFirstDeduplicationAcrossConcurrentRecoverers(t *testing.T) {
 	got := waitForStreamAdded(t, victimChan, "session0", 5*time.Second)
 	require.Equal(t, "session0", got.Payload.DataStreamName)
 
-	// two recoverers come up with fast scans
-	rec1Client, rec1 := createConsumerWithRecovery("111", redisContainer)
+	// two recoverers come up
+	rec1Client, rec1 := createConsumer("111", redisContainer)
 	op1, err := rec1Client.Init(ctx)
 	require.NoError(t, err)
 
-	rec2Client, rec2 := createConsumerWithRecovery("222", redisContainer)
+	rec2Client, rec2 := createConsumer("222", redisContainer)
 	op2, err := rec2Client.Init(ctx)
 	require.NoError(t, err)
 
@@ -125,18 +134,42 @@ func TestXAckFirstDeduplicationAcrossConcurrentRecoverers(t *testing.T) {
 		}
 	}()
 
-	// kill the victim; its lock expires (TTL == heartbeat interval) and the pending message becomes
-	// eligible for recovery once idle exceeds MinIdleTime.
+	// kill the victim and wait for its lock to expire (TTL == heartbeat interval), so the recoverers
+	// observe the owner as dead and the entry becomes recoverable.
 	killVictim()
+	time.Sleep(4 * time.Second)
 
-	require.Eventually(t, func() bool {
-		return rec1.ReQueueCount()+rec2.ReQueueCount() >= 1
-	}, 15*time.Second, 200*time.Millisecond, "one recoverer should re-queue the stranded stream")
+	// resolve the stranded pending entry id (still owned by the dead victim in the group PEL)
+	pending, err := redisClient.XPendingExt(ctx, &redisgo.XPendingExtArgs{
+		Stream: "consumer-input",
+		Group:  "consumer-group",
+		Start:  "-",
+		End:    "+",
+		Count:  10,
+	}).Result()
+	require.NoError(t, err)
+	require.NotEmpty(t, pending, "the victim's message should still be pending")
+	lbsInfo := notifs.LBSInfo{DataStreamName: "session0", IDInLBS: pending[0].ID}
 
-	// Give any racing scan a moment, then assert exactly one re-queue total (XACK-first dedup).
-	time.Sleep(3 * time.Second)
+	// both recoverers Claim the same entry concurrently
+	var wg sync.WaitGroup
+	claimErrs := make([]error, 2)
+	wg.Add(2)
+	go func() { defer wg.Done(); claimErrs[0] = rec1Client.Claim(ctx, lbsInfo) }()
+	go func() { defer wg.Done(); claimErrs[1] = rec2Client.Claim(ctx, lbsInfo) }()
+	wg.Wait()
+
+	won := 0
+	for _, e := range claimErrs {
+		if e == nil {
+			won++
+		} else {
+			require.ErrorIs(t, e, errs.ErrAlreadyClaimed, "the losing Claim must report ErrAlreadyClaimed")
+		}
+	}
+	require.Equal(t, 1, won, "exactly one Claim must win the XACK race")
 	require.Equal(t, 1, rec1.ReQueueCount()+rec2.ReQueueCount(),
-		"exactly one recoverer must win the XACK race")
+		"exactly one recoverer re-queued the entry (XACK-first dedup)")
 
 	require.NoError(t, rec1Client.Done(ctx))
 	require.NoError(t, rec2Client.Done(ctx))
