@@ -89,7 +89,10 @@ func failoverShard(t *testing.T, cluster *redisgo.ClusterClient, shard clusterSh
 			}
 			if time.Since(lastAttempt) > 7*time.Second && !isMaster(to) && replicaLinkUp(to) && masterSeesReplica(from, to) {
 				lastAttempt = time.Now()
-				_ = to.ClusterFailover(context.Background()).Err()
+				if err := to.ClusterFailover(context.Background()).Err(); err != nil {
+					// the request itself was refused, so there is no attempt in flight: try again
+					lastAttempt = time.Time{}
+				}
 			}
 			return false
 		}, 60*time.Second, 200*time.Millisecond, "failover %s -> %s did not complete",
