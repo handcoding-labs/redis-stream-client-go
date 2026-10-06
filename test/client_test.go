@@ -940,12 +940,14 @@ func TestLoggerInjection(t *testing.T) {
 	// metrics
 	require.Equal(t, 1, rec.StartupRecoveryCount(), "logger injection consumer startup")
 
-	logOutput = customHandler.messages()
-	require.NotEmpty(t, logOutput)
+	// Read through the handler, which holds its lock: a goroutine of the client can still log after
+	// Done, so logOutput itself must not be read or reassigned here.
+	captured := customHandler.messages()
+	require.NotEmpty(t, captured)
 	found := false
 	// we're just testing logging here so one deterministic message is enough to confirm the
 	// injected logger is wired up. The startup reconciliation scan always logs once at Init.
-	for _, msg := range logOutput {
+	for _, msg := range captured {
 		if strings.Contains(msg, "startup reconciliation scan complete") {
 			found = true
 			break
