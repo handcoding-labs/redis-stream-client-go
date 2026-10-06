@@ -41,16 +41,28 @@ start() {
   for p in $(ports); do addrs+=("127.0.0.1:$p"); done
   "$REDIS_CLI" --cluster create "${addrs[@]}" --cluster-replicas "$REPLICAS" --cluster-yes >/dev/null
 
-  # wait until the cluster reports ok
-  for _ in $(seq 1 100); do
-    if "$REDIS_CLI" -p "$BASE_PORT" cluster info | grep -q 'cluster_state:ok'; then
+  # wait until the cluster reports ok and every replica has finished its initial sync; tests that
+  # fail over to a replica need it to be in sync (CLUSTER SLOTS omits replicas whose link is down)
+  for _ in $(seq 1 150); do
+    if "$REDIS_CLI" -p "$BASE_PORT" cluster info | grep -q 'cluster_state:ok' && replicas_synced; then
       echo "cluster up: $(IFS=,; echo "${addrs[*]}")"
       return 0
     fi
     sleep 0.2
   done
-  echo "cluster did not reach state ok" >&2
+  echo "cluster did not become ready (state ok and all replicas synced)" >&2
   return 1
+}
+
+# replicas_synced succeeds when no node is a replica with a down master link.
+replicas_synced() {
+  local p info
+  for p in $(ports); do
+    info=$("$REDIS_CLI" -p "$p" info replication) || return 1
+    if grep -q 'role:slave' <<<"$info" && ! grep -q 'master_link_status:up' <<<"$info"; then
+      return 1
+    fi
+  done
 }
 
 stop() {
