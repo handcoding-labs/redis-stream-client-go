@@ -26,6 +26,12 @@ type RedisStreamClient interface {
 	// Done marks the end of processing the stream
 	//
 	// should be called when consumer is shutting down and is not expected to be called again.
+	//
+	// Done does not close the Redis client passed to NewRedisStreamClient (the caller owns it), and
+	// canceling the client's context does not interrupt its blocking read on the LBS stream. Until
+	// that connection is closed the stopped consumer can still be handed one newly added LBS message,
+	// which then waits in its pending list until the reconciliation scan re-queues it (see
+	// docs/USAGE.md, "Shutdown and the Redis connection"). Close the Redis client after Done returns.
 	Done(ctx context.Context) error
 	// DoneStream marks end of processing for a particular stream
 	//
