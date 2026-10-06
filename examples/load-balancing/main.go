@@ -112,12 +112,13 @@ func runConsumer() {
 				go handleStreamAdded(ctx, client, notification, &processedStreams, &streamCount)
 
 			case notifs.StreamExpired:
-				slog.Warn("⚠️  Stream expired, attempting to claim", "consumer_id", consumerID, "payload", notification.Payload)
+				// Claim re-queues the expired stream (XACK + XADD) for redistribution; it does not
+				// grant ownership here. The recovered stream is processed when it comes back as a
+				// StreamAdded (handled above). Recovery also happens via the periodic scan, so this
+				// handler is an optional low-latency optimization.
+				slog.Warn("⚠️  Stream expired, re-queuing for recovery", "consumer_id", consumerID, "payload", notification.Payload)
 				if err := client.Claim(ctx, notification.Payload); err != nil {
-					slog.Error("❌ Failed to claim expired stream", "consumer_id", consumerID, "error", err)
-				} else {
-					slog.Info("✅ Successfully claimed expired stream", "consumer_id", consumerID)
-					go handleClaimedStream(ctx, client, notification.Payload.DataStreamName, &processedStreams, &streamCount)
+					slog.Debug("stream already recovered by another consumer or the scan", "consumer_id", consumerID, "error", err)
 				}
 
 			case notifs.StreamDisowned:
@@ -251,23 +252,6 @@ func handleStreamAdded(ctx context.Context, client types.RedisStreamClient, noti
 		slog.Error("Failed to mark stream done", "error", err, "stream", streamName, "consumer_id", consumerID)
 	} else {
 		slog.Info("✅ Completed processing stream", "consumer_id", consumerID, "stream_name", streamName, "processing_time", processingTime)
-	}
-}
-
-func handleClaimedStream(ctx context.Context, client types.RedisStreamClient, streamName string, processedStreams *sync.Map, streamCount *int32) {
-	slog.Info("🔄 Processing claimed stream", "consumer_id", client.ID(), "stream_name", streamName)
-
-	// Simulate processing the claimed stream
-	time.Sleep(1 * time.Second)
-
-	processedStreams.Store(streamName, time.Now())
-	*streamCount++
-
-	// Mark stream as done after processing
-	if err := client.DoneStream(ctx, streamName); err != nil {
-		slog.Error("Failed to mark claimed stream done", "error", err, "stream", streamName, "consumer_id", client.ID())
-	} else {
-		slog.Info("✅ Completed processing claimed stream", "consumer_id", client.ID(), "stream_name", streamName)
 	}
 }
 

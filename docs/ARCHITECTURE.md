@@ -15,10 +15,40 @@ When consumers fail (crash or get stuck), recovery uses XCLAIM/XAUTOCLAIM. This 
 2. Stuck consumers (GC, stop-the-world) block processing indefinitely
 
 This library solves both by:
-1. Using keyspace notifications to inform other consumers of failures
-2. Providing a Claim API for immediate takeover
+1. A **periodic reconciliation scan** that recovers a dead consumer's work by re-queuing it
+   (`XACK` + `XADD`) — but only after confirming the owner's distributed lock has actually expired,
+   so a slow-but-alive consumer is never disturbed.
+2. **Keyspace notifications** as a low-latency fast path: a lock expiry surfaces as a `StreamExpired`
+   notification, and `Claim` re-queues the orphaned stream for redistribution.
 
 ![Redis streams failure recovery - new](../imgs/redis_stream_failure_recovery-redis-stream-client_way.png)
+
+### Recovery model
+
+Recovery is **cluster-safe** and **at-least-once**:
+
+- The scan reads the LBS consumer group's pending entries (`XPENDING`) and, for each entry idle
+  longer than `MinIdleTime`, checks whether the owner's lock key still exists (`EXISTS`):
+  - **lock present** → owner alive (just slow) → leave it untouched (prevents duplicate processing);
+  - **lock absent** → owner dead → recover it.
+- Recovery acknowledges the original pending message and re-adds it as a new message
+  (`XACK` then `XADD`). The `XACK` happens first, so when several consumers race to recover the same
+  message, only one wins and re-queues it.
+- Each re-queue increments a `_retry_count` field. Once it exceeds `MaxRetries`, the message is routed
+  to the configured `DLQStream` (or dropped if none is set).
+- Startup recovery is simply the first pass of this scan (it replaced the old `XAUTOCLAIM` startup
+  recovery).
+
+### Cluster modes
+
+- `ClusterModeSingleShard` (default): keyspace notifications are subscribed on the connected node;
+  suitable for single-node, primary/replica, and Sentinel deployments.
+- `ClusterModeOSS`: requires a `*redis.ClusterClient`. Keyspace notifications fire only on the master
+  owning the expiring key, so the client enables notifications and subscribes on **every master**;
+  the reconciliation scan is the authoritative recovery mechanism. `ResetTopology(ctx)` reloads the
+  cluster view and rebuilds subscriptions after a failover or resharding.
+
+> The scan uses `XPENDING ... IDLE`, which requires **Redis 6.2+**.
 
 ## Load Balancer Stream (LBS)
 
@@ -42,7 +72,12 @@ The library spawns multiple goroutines per client:
 │                                                                  │
 │  ┌─────────────────┐                                            │
 │  │ Keyspace        │  1 goroutine - listens for Redis key       │
-│  │ Listener        │  expiration events (pub/sub)               │
+│  │ Listener        │  expiration events (pub/sub). In OSS mode  │
+│  └─────────────────┘  one per master, fanned into one channel.  │
+│                                                                  │
+│  ┌─────────────────┐                                            │
+│  │ Reconciliation  │  1 goroutine - periodic XPENDING scan that │
+│  │ Scanner         │  re-queues dead consumers' work (jittered) │
 │  └─────────────────┘                                            │
 │                                                                  │
 │  ┌─────────────────┐                                            │
@@ -63,7 +98,7 @@ The library spawns multiple goroutines per client:
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 
-Total goroutines per client: 3 + N (where N = active streams)
+Total goroutines per client: 4 + N (where N = active streams; +1 more per extra master in OSS mode)
 ```
 
 **Key points:**
@@ -104,7 +139,10 @@ The library uses an internal `NotificationBroker` to safely manage notifications
 |-------------|---------|-----|
 | `<service>-input` | LBS stream | Persistent |
 | `<service>-group` | Consumer group | Persistent |
-| `mutex:<stream>` | Distributed lock | `hbInterval` |
+| `<stream><MUTEX_KEY_SEP><id>` | Distributed lock per claimed stream | `hbInterval` |
+| `<DLQStream>` | Optional dead-letter stream for messages exceeding `MaxRetries` | Persistent |
+
+Re-queued LBS messages carry an extra `_retry_count` field; DLQ entries additionally carry `_dlq_reason`.
 
 ## Design Decisions
 
@@ -123,10 +161,11 @@ The library uses an internal `NotificationBroker` to safely manage notifications
 - Graceful shutdown without panics
 - Centralized backpressure handling
 
-**Why keyspace notifications instead of polling?**
-- Lower latency on lock expiration
-- No wasted Redis commands
-- Native Redis pub/sub reliability
+**Why keyspace notifications AND a periodic scan?**
+- Keyspace notifications give low-latency recovery on the fast path, but are pub/sub (not durable)
+  and, in a cluster, only fire on the shard owning the key.
+- The periodic reconciliation scan is the authoritative, cluster-safe safety net: it catches every
+  expiry the notifications miss and is the mechanism that verifies lock liveness before re-queuing.
 
 ## Error Handling Design
 
