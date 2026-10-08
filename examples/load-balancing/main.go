@@ -67,7 +67,7 @@ func runConsumer() {
 	}
 
 	// Enable keyspace notifications
-	if err := redisClient.ConfigSet(ctx, "notify-keyspace-events", "Ex").Err(); err != nil {
+	if err := redisClient.ConfigSet(ctx, "notify-keyspace-events", "KEx").Err(); err != nil {
 		slog.Error("Failed to enable keyspace notifications", "error", err)
 		os.Exit(1)
 	}
