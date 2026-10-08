@@ -12,7 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     the client enables keyspace notifications and subscribes on every master node
     ([#108](https://github.com/handcoding-labs/redis-stream-client-go/issues/108)).
   - `RedisStreamClient.ReinitTopology(ctx)` to re-initialize against the current topology and rebuild
-    keyspace subscriptions after failover/resharding. It only proceeds when the cluster is settled
+    keyspace subscriptions after a failover or when a master is added or removed (see
+    `docs/USAGE.md` for when to call it; resharding between existing masters does not need it). It only proceeds when the cluster is settled
     (every answering node reports `cluster_state:ok` and they all agree on slot ownership); otherwise
     it returns the new sentinel `errs.ErrClusterNotSettled` without changing anything
     ([#109](https://github.com/handcoding-labs/redis-stream-client-go/issues/109)).
