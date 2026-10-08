@@ -41,8 +41,9 @@ func TestSentinelsSurviveWrappingByCallers(t *testing.T) {
 }
 
 func TestWrapperTypesImplementUnwrap(t *testing.T) {
-	// compile-time guard against the method being misnamed again
-	var _ interface{ Unwrap() error } = (*RedisErr)(nil)
-	var _ interface{ Unwrap() error } = (*MutexErr)(nil)
-	var _ interface{ Unwrap() error } = (*EncodingError)(nil)
+	// guards against the method being misnamed again: errors.Is/As only follow `Unwrap() error`
+	for _, v := range []any{&RedisErr{}, &MutexErr{}, &EncodingError{}} {
+		_, ok := v.(interface{ Unwrap() error })
+		require.True(t, ok, "%T must implement Unwrap() error", v)
+	}
 }
