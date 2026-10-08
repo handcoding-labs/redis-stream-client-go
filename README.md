@@ -491,8 +491,9 @@ func main() {
     // Enable keyspace notifications
     redisClient.ConfigSet(ctx, "notify-keyspace-events", "Ex")
 
-    // Create and initialize stream client
-    client, err := impl.NewRedisStreamClient(redisClient, "example-service")
+    // Create and initialize stream client. WithForceConfigOverride is needed because the keyspace
+    // config is already set above; without it Init refuses to start (ErrExistingConfigWithoutOverride).
+    client, err := impl.NewRedisStreamClient(redisClient, "example-service", impl.WithForceConfigOverride())
     if err != nil {
         slog.Error("could not initialize", "error", err.Error())
     }
