@@ -32,6 +32,6 @@ func (e *MutexErr) Error() string {
 	return fmt.Sprintf("mutex error on operation [%s]: %v", e.Op.String(), e.Err)
 }
 
-func (e *MutexErr) Unwwrap() error {
+func (e *MutexErr) Unwrap() error {
 	return e.Err
 }

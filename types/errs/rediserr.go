@@ -38,6 +38,6 @@ func (e *RedisErr) Error() string {
 	return fmt.Sprintf("redis error during operation [%s]: %v", e.Op.String(), e.Err)
 }
 
-func (e *RedisErr) Unwwrap() error {
+func (e *RedisErr) Unwrap() error {
 	return e.Err
 }
