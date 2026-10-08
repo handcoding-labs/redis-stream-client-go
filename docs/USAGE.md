@@ -43,10 +43,17 @@ import (
 )
 
 client, err := rsc.NewRedisStreamClient(
-    redisClient, 
+    redisClient,
     "my-service",
-    rsc.WithLBSIdleTime(30*time.Second),        // Default: 40s
-    rsc.WithLBSRecoveryCount(500),              // Default: 1000
+    rsc.WithClusterMode(rsc.ClusterModeSingleShard), // or ClusterModeOSS (needs *redis.ClusterClient)
+    rsc.WithRecoveryConfig(rsc.RecoveryConfig{
+        ReconciliationInterval: 60 * time.Second,    // Default: 60s
+        MinIdleTime:            30 * time.Second,    // Default: 30s
+        BatchSize:              50,                  // Default: 50
+        MaxRetries:             3,                   // Default: 3
+        DLQStream:              "my-service-dlq",    // Default: "" => "<service>-input-dlq"
+        DLQMaxLen:              10000,               // Default: 10000 (approx MAXLEN); 0 => unbounded
+    }),
     rsc.WithRetryConfig(rsc.RetryConfig{
         MaxRetries:        -1,                   // Default: 5
         InitialRetryDelay: 100*time.Millisecond, // Default: 100 * time.Millisecond
@@ -58,14 +65,16 @@ client, err := rsc.NewRedisStreamClient(
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `WithLBSIdleTime(d)` | Time before message considered idle | 40s |
-| `WithLBSRecoveryCount(n)` | Messages to fetch during recovery | 1000 |
-| `WithRetryConfig(config)` | Configure retry behavior (see below) | 5 retries, 100ms-30s backoff |
+| `WithClusterMode(m)` | `ClusterModeSingleShard` or `ClusterModeOSS` (Redis Cluster) | SingleShard |
+| `WithRecoveryConfig(c)` | Tunes the periodic reconciliation scan (interval, min idle, batch, retries, DLQ) | 60s / 30s / 50 / 3 / "" |
+| `WithRetryConfig(config)` | Configure LBS-read retry behavior (see below) | 5 retries, 100ms-30s backoff |
 | `WithLogger(logger)` | Custom slog.Logger implementation | slog.Default() |
 | `WithMetricsRecorder(recorder)` | Provide your own `metrics.Recorder` implementation for instrumentation | &metrics.NoopRecorder{} |
 
+> **Deprecated:** `WithLBSIdleTime` and `WithLBSRecoveryCount` no longer affect recovery (now governed by `RecoveryConfig`) and will be removed in a future release. `ClusterModeOSS` requires the underlying client to be a `*redis.ClusterClient`; recovery requires **Redis 6.2+**.
+
 **Notes:**
-- `LBSIdleTime` must be > 2× heartbeat interval (minimum 4s)
+- `MinIdleTime` should be comfortably larger than the heartbeat interval so a live consumer's lock is always present before its message becomes eligible for recovery.
 - Retry logic uses exponential backoff: 100ms → 200ms → 400ms → 800ms → ... (capped at `MaxRetryDelay`)
     - Resets error counter after successful reads
     - `MaxRetries = -1` => unlimited retries (recommended for production)  
@@ -90,8 +99,8 @@ Returns a channel that receives notifications about stream events.
 
 | Type | When | Action |
 |------|------|--------|
-| `StreamAdded` | New stream assigned via LBS | Start processing the stream |
-| `StreamExpired` | Another consumer's lock expired | Call `Claim()` to take ownership |
+| `StreamAdded` | A stream is assigned to this consumer (fresh or recovered/re-queued) | Start processing the stream |
+| `StreamExpired` | A keyspace notification reports another consumer's lock expired | Optionally call `Claim()` to re-queue it (low-latency fast path); do not process here |
 | `StreamDisowned` | Lost lock (was stuck too long) | Stop processing, cleanup |
 | `StreamTerminated` | Channel closing | Shutdown handler |
 
@@ -101,15 +110,15 @@ Returns a channel that receives notifications about stream events.
 for notification := range outputChan {
     switch notification.Type {
     case notifs.StreamAdded:
-        // New stream assigned to this consumer
+        // Stream assigned to this consumer (fresh, or recovered and re-queued)
         go processStream(notification.Payload.DataStreamName)
         
     case notifs.StreamExpired:
-        // Another consumer died, try to claim their stream
+        // Another consumer died: re-queue its stream for redistribution. Do NOT process here —
+        // the re-queued stream arrives as StreamAdded when picked up. Handling this is optional;
+        // the periodic reconciliation scan recovers it regardless.
         if err := client.Claim(ctx, notification.Payload); err != nil {
-            log.Warn("Claim failed", "error", err)
-        } else {
-            go processStream(notification.Payload.DataStreamName)
+            log.Debug("stream already recovered elsewhere", "error", err)
         }
         
     case notifs.StreamDisowned:
@@ -160,20 +169,36 @@ redisClient.XAdd(ctx, &redis.XAddArgs{
 
 ## Claiming Expired Streams
 
-When `StreamExpired` notification arrives:
+`Claim` recovers an expired stream by acknowledging the dead consumer's pending message and
+re-adding it to the LBS as a new message (`XACK` + `XADD`). It does **not** grant ownership to the
+caller — the re-queued stream is redistributed normally and the consumer that picks it up (possibly
+this one) receives a `StreamAdded`. Process the stream then, not right after `Claim`.
 
 ```go
 case notifs.StreamExpired:
+    // Trigger recovery; processing happens on the subsequent StreamAdded.
     if err := client.Claim(ctx, notification.Payload); err != nil {
-        // Another consumer got there first - expected behavior
-        log.Debug("Claim failed", "error", err)
-    } else {
-        log.Info("Claimed stream", "stream", notification.Payload.DataStreamName)
-        go processStream(notification.Payload.DataStreamName)
+        // ErrAlreadyClaimed: another consumer or the reconciliation scan already recovered it.
+        log.Debug("already recovered", "error", err)
     }
 ```
 
-Claim failures are normal—multiple consumers race to claim expired streams.
+A non-nil error (`errs.ErrAlreadyClaimed`) is normal — multiple consumers and the periodic scan can
+race to recover the same stream; only one wins. You may also skip handling `StreamExpired` entirely
+and rely solely on the periodic reconciliation scan (required in multi-shard clusters).
+
+## Cluster Topology Changes (ClusterModeOSS)
+
+In `ClusterModeOSS`, call `ResetTopology` after a failover or resharding to reload the cluster view
+and rebuild keyspace subscriptions on the current set of masters:
+
+```go
+if err := client.ResetTopology(ctx); err != nil {
+    log.Error("topology reset failed", "error", err)
+}
+```
+
+It is a no-op in `ClusterModeSingleShard`.
 
 ## Completing Stream Processing
 
@@ -196,7 +221,7 @@ This:
 ## Client Shutdown
 
 ```go
-err := client.Done()
+err := client.Done(ctx)
 ```
 
 This:
@@ -217,7 +242,7 @@ go func() {
 }()
 
 <-sigChan
-client.Done()
+client.Done(ctx)
 ```
 
 ## Client ID

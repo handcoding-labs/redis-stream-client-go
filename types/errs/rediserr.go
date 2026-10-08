@@ -14,6 +14,11 @@ const (
 	OpAckStream                  RedisOp = "acknowledging stream"
 	OpDelStream                  RedisOp = "deleting stream"
 	OpClosePubSub                RedisOp = "closing redis pubsub"
+	OpReconcile                  RedisOp = "reconciling pending LBS messages"
+	OpXPending                   RedisOp = "reading pending LBS messages"
+	OpReQueue                    RedisOp = "re-queuing LBS message"
+	OpRouteDLQ                   RedisOp = "routing message to DLQ"
+	OpResetTopology              RedisOp = "resetting cluster topology"
 )
 
 func (op RedisOp) String() string {

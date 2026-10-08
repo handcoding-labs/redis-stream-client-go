@@ -13,6 +13,21 @@ import (
 
 type RecoverableRedisOption func(*RecoverableRedisStreamClient) error
 
+// ClusterMode selects how the client subscribes to keyspace notifications and recovers work.
+type ClusterMode int
+
+const (
+	// ClusterModeSingleShard is the default. Keyspace notifications are subscribed to on the
+	// single (logical) shard the client is connected to. This is the historical behavior and is
+	// appropriate for a single Redis node, primary/replica, or Sentinel deployment.
+	ClusterModeSingleShard ClusterMode = iota
+	// ClusterModeOSS targets an OSS Redis Cluster. Keyspace notifications fire only on the shard
+	// owning the expiring key, so the client subscribes on every master node and relies on the
+	// periodic reconciliation scan as the authoritative, cluster-safe recovery mechanism. Requires
+	// the underlying client to be a *redis.ClusterClient.
+	ClusterModeOSS
+)
+
 // RetryConfig holds all retry-related configuration
 type RetryConfig struct {
 	// MaxRetries is the maximum number of retry attempts
@@ -154,6 +169,16 @@ func WithLogger(logger *slog.Logger) RecoverableRedisOption {
 func WithMetricsRecorder(recorder metrics.Recorder) RecoverableRedisOption {
 	return func(r *RecoverableRedisStreamClient) error {
 		r.metricsRecorder = recorder
+		return nil
+	}
+}
+
+// WithClusterMode selects the keyspace-notification and recovery strategy. Use ClusterModeOSS
+// when running against an OSS Redis Cluster; this requires the underlying client to be a
+// *redis.ClusterClient (validated at Init).
+func WithClusterMode(mode ClusterMode) RecoverableRedisOption {
+	return func(r *RecoverableRedisStreamClient) error {
+		r.clusterMode = mode
 		return nil
 	}
 }
