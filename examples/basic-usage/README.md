@@ -67,7 +67,7 @@ redisClient := redis.NewUniversalClient(&redis.UniversalOptions{
 })
 
 // Enable keyspace notifications (required for failure detection)
-redisClient.ConfigSet(ctx, "notify-keyspace-events", "Ex")
+redisClient.ConfigSet(ctx, "notify-keyspace-events", "KEx")
 
 // Create Redis Stream Client
 client, err := impl.NewRedisStreamClient(redisClient, "basic-example")

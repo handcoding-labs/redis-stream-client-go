@@ -489,7 +489,7 @@ func main() {
     defer redisClient.Close()
 
     // Enable keyspace notifications
-    redisClient.ConfigSet(ctx, "notify-keyspace-events", "Ex")
+    redisClient.ConfigSet(ctx, "notify-keyspace-events", "KEx")
 
     // Create and initialize stream client
     client, err := impl.NewRedisStreamClient(redisClient, "example-service")
@@ -587,7 +587,7 @@ go get github.com/handcoding-labs/redis-stream-client-go
 ## Requirements
 
 - Go 1.25.8+
-- Redis 6.0+ with keyspace notifications enabled (`notify-keyspace-events Ex`)
+- Redis 6.0+ with keyspace notifications enabled (`notify-keyspace-events KEx`)
 - Environment variable: `POD_NAME` or `POD_IP`
 
 ## License
