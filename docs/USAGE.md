@@ -245,6 +245,36 @@ go func() {
 client.Done(ctx)
 ```
 
+### Shutdown and the Redis connection
+
+`Done()` cancels the client's context but does **not** close the Redis client you passed in; you
+own it. The consumer's blocking read on the LBS stream (`XREADGROUP ... BLOCK 0`) is not interrupted
+by canceling the context: it stays parked on the Redis server until its connection is closed.
+
+If a new LBS message arrives while a stopped consumer's read is still parked, Redis can hand the
+message to it (Redis serves blocked clients in the order they started blocking, so this is most
+likely for a consumer that has been waiting the longest). Nothing processes that message. It sits in
+the stopped consumer's pending list until the reconciliation scan notices it, which takes up to
+`RecoveryConfig.MinIdleTime` plus one `ReconciliationInterval` (about 30-90 seconds with the
+defaults), and it uses up one of the message's `RecoveryConfig.MaxRetries`. It is never processed
+twice, and it is recovered without intervention.
+
+This does not happen when a process dies (SIGKILL, OOM, pod eviction), because the operating system
+closes its connections. It only applies to a consumer that stops while its Redis connection stays
+open, for example while a process finishes its shutdown grace period or when consumers are stopped
+and started inside a long-running process.
+
+To avoid it, close the Redis client once `Done()` returns:
+
+```go
+<-sigChan
+client.Done(ctx)
+redisClient.Close() // closes the connection, which ends the parked read
+```
+
+If the Redis client is shared with other code and cannot be closed, give each stream client its own
+Redis client, or accept the bounded delay described above.
+
 ## Client ID
 
 Get consumer ID for logging:

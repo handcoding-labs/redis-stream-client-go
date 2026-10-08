@@ -58,3 +58,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Recovery requires **Redis 6.2+** (the scan uses `XPENDING ... IDLE`).
 
 See [`docs/MIGRATION.md`](docs/MIGRATION.md) for upgrade steps.
+
+### Known limitations
+- Canceling a client's context (or calling `Done()`) does not interrupt its blocking `XREADGROUP`
+  on the LBS stream, and `Done()` does not close the caller's Redis client. While that connection
+  stays open the stopped consumer can still be handed one newly added message, which is recovered by
+  the reconciliation scan after `MinIdleTime` and uses one retry. No message is processed twice.
+  Close the Redis client after `Done()`; see "Shutdown and the Redis connection" in `docs/USAGE.md`.

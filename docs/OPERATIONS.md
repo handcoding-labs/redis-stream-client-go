@@ -274,6 +274,26 @@ redis-cli XTRIM my-service-input MAXLEN ~ 10000
   check already protects slow-but-alive consumers, but a larger `MinIdleTime` avoids unnecessary scan
   work for long-running streams)
 
+### A Stream Starts Late After a Consumer Shuts Down
+
+**Symptom:** a message added to the LBS stream around the time a consumer stopped (deploy,
+scale-down) is picked up 30-90 seconds later than usual, and its `_retry_count` is one higher than
+expected. The reconciliation scan logs a re-queue for it.
+
+**Cause:** `Done()` and context cancellation do not interrupt the consumer's blocking
+`XREADGROUP`. While the stopped consumer's Redis connection is still open, Redis can deliver one new
+message to it; nothing processes it, so it waits in that consumer's pending list until the scan
+re-queues it (`MinIdleTime` plus up to one `ReconciliationInterval`). There is no duplicate
+processing. Real crashes (SIGKILL, OOM, eviction) close the connection and are not affected.
+
+**Solutions:**
+- Close the Redis client right after `Done()` returns (see
+  [Shutdown and the Redis connection](USAGE.md#shutdown-and-the-redis-connection)).
+- If the client is shared and cannot be closed, use a dedicated Redis client per stream client.
+- Otherwise accept the bounded delay; lowering `RecoveryConfig.MinIdleTime` shortens it, at the cost
+  of more scan work and less tolerance for slow-but-alive consumers.
+- Frequent occurrences consume `MaxRetries`; watch the DLQ if you restart consumers often.
+
 ### Output Channel Closed Unexpectedly
 
 Check `StreamTerminated` notification for reason:
