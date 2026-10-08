@@ -39,7 +39,7 @@ func main() {
     defer redisClient.Close()
 
     // Enable keyspace notifications
-    redisClient.ConfigSet(ctx, "notify-keyspace-events", "Ex")
+    redisClient.ConfigSet(ctx, "notify-keyspace-events", "KEx")
 
     // Create and initialize stream client. WithForceConfigOverride is needed because the keyspace
     // config is already set above; without it Init refuses to start (ErrExistingConfigWithoutOverride).
@@ -162,7 +162,7 @@ docker run -d --name redis -p 6379:6379 redis:7
 
 2. Enable keyspace notifications:
 ```bash
-redis-cli CONFIG SET notify-keyspace-events Ex
+redis-cli CONFIG SET notify-keyspace-events KEx
 ```
 
 ### Run

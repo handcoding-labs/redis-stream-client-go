@@ -258,12 +258,12 @@ id := client.ID()  // e.g., "redis-consumer-my-pod-name"
 Enable keyspace notifications:
 
 ```bash
-redis-cli CONFIG SET notify-keyspace-events Ex
+redis-cli CONFIG SET notify-keyspace-events KEx
 ```
 
 Or in `redis.conf`:
 ```
-notify-keyspace-events Ex
+notify-keyspace-events KEx
 ```
 
 ## Error Handling

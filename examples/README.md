@@ -68,7 +68,7 @@ redisClient := redis.NewUniversalClient(&redis.UniversalOptions{
 })
 
 // Enable keyspace notifications for expired events
-redisClient.ConfigSet(ctx, "notify-keyspace-events", "Ex")
+redisClient.ConfigSet(ctx, "notify-keyspace-events", "KEx")
 
 // Create Redis Stream Client. WithForceConfigOverride is needed because the keyspace config is
 // already set above; without it Init refuses to start (ErrExistingConfigWithoutOverride).
@@ -185,7 +185,7 @@ To test load balancing and failure recovery:
 
 3. **No messages received**
    - Verify keyspace notifications are enabled: `CONFIG GET notify-keyspace-events`
-   - Should return `Ex` or similar pattern
+   - Should include `K` and `x` (Redis reports `KEx` as `xKE`)
 
 4. **Tests failing**
    - Ensure no other Redis clients are using the same consumer group

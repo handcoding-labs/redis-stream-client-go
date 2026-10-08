@@ -67,7 +67,7 @@ redisClient := redis.NewUniversalClient(&redis.UniversalOptions{
 })
 
 // Enable keyspace notifications (required for failure detection)
-redisClient.ConfigSet(ctx, "notify-keyspace-events", "Ex")
+redisClient.ConfigSet(ctx, "notify-keyspace-events", "KEx")
 
 // Create Redis Stream Client. WithForceConfigOverride is needed because the keyspace config is
 // already set above; without it Init refuses to start (ErrExistingConfigWithoutOverride).

@@ -215,7 +215,7 @@ export POD_IP=$(hostname -I | awk '{print $1}')
 **Check keyspace notifications:**
 ```bash
 redis-cli CONFIG GET notify-keyspace-events
-# Should include "Ex"
+# Should include "K" and "x" (Redis reports KEx as xKE)
 ```
 
 **Check LBS stream exists:**
