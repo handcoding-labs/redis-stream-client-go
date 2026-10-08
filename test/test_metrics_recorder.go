@@ -125,7 +125,7 @@ func (t *testMetricsRecorder) RecordAckAddGap(streamName string) {
 	t.ackAddGapCount++
 }
 
-func (t *testMetricsRecorder) RecordTopologyReset(success bool) {
+func (t *testMetricsRecorder) RecordTopologyReinit(success bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.topologyResetCount++
@@ -250,7 +250,7 @@ func (t *testMetricsRecorder) AckAddGapCount() int {
 	return t.ackAddGapCount
 }
 
-func (t *testMetricsRecorder) TopologyResetCount() int {
+func (t *testMetricsRecorder) TopologyReinitCount() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.topologyResetCount

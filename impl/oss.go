@@ -45,7 +45,7 @@ func (o *ossSubscriptions) closeAll(logger *slog.Logger) {
 // metric rather than aborting the whole sweep, since the periodic reconciliation scan is the
 // authoritative recovery path. A deterministic misconfiguration (existing config without force
 // override) is fatal and aborts immediately, as is the case where every master fails. reapply is set
-// by ResetTopology: the masters then already carry the config this client applied during Init, so
+// by ReinitTopology: the masters then already carry the config this client applied during Init, so
 // the existing-config guard is skipped.
 func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsOnMasters(
 	ctx context.Context,
@@ -95,7 +95,7 @@ func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsOnMasters(
 }
 
 // subscribeToExpiredEventsOSS opens a keyspace subscription on every master node and tracks the
-// subscriptions so they can be torn down and rebuilt by ResetTopology.
+// subscriptions so they can be torn down and rebuilt by ReinitTopology.
 func (r *RecoverableRedisStreamClient) subscribeToExpiredEventsOSS(ctx context.Context) {
 	cluster, ok := r.redisClient.(*redis.ClusterClient)
 	if !ok {

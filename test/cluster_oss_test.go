@@ -109,7 +109,7 @@ func failoverShard(t *testing.T, cluster *redisgo.ClusterClient, shard clusterSh
 		}, "failover "+from.Options().Addr+" -> "+to.Options().Addr+" did not complete")
 
 		// Hand control back only once every node agrees on the new topology. Until then a client
-		// asking an arbitrary node for the topology (as ResetTopology does) can get the old one.
+		// asking an arbitrary node for the topology (as ReinitTopology does) can get the old one.
 		waitUntil(t, 30*time.Second, 100*time.Millisecond, func() (bool, string) {
 			return clusterSettled(allNodes)
 		}, "cluster did not settle after the failover")
@@ -477,7 +477,7 @@ func TestOSSClusterRecoversStreamsLockedOnEveryMaster(t *testing.T) {
 }
 
 // TestOSSClusterSubscriptionsAreNotLeaked covers #108/#109: exactly one pattern subscription per
-// master is open while the client runs, ResetTopology replaces (rather than adds to) them, and Done
+// master is open while the client runs, ReinitTopology replaces (rather than adds to) them, and Done
 // closes all of them.
 func TestOSSClusterSubscriptionsAreNotLeaked(t *testing.T) {
 	cl := requireCluster(t)
@@ -513,10 +513,10 @@ func TestOSSClusterSubscriptionsAreNotLeaked(t *testing.T) {
 	requireDelta(1, "one subscription per master after Init")
 
 	for i := 0; i < 3; i++ {
-		require.NoError(t, client.ResetTopology(ctx))
+		require.NoError(t, client.ReinitTopology(ctx))
 	}
-	require.Equal(t, 3, rec.TopologyResetCount())
-	requireDelta(1, "ResetTopology must replace subscriptions, not stack them")
+	require.Equal(t, 3, rec.TopologyReinitCount())
+	requireDelta(1, "ReinitTopology must replace subscriptions, not stack them")
 
 	require.NoError(t, client.Done(ctx))
 	requireDelta(0, "Done must close every per-master subscription")
@@ -563,11 +563,11 @@ func TestOSSClusterInitRefusesExistingConfigWithoutOverride(t *testing.T) {
 	}
 }
 
-// TestOSSClusterResetTopologyWithoutForceOverride: ResetTopology is documented as safe to call at any
+// TestOSSClusterReinitTopologyWithoutForceOverride: ReinitTopology is documented as safe to call at any
 // time (e.g. after a failover), so it must work for a client that did not opt in to
 // WithForceConfigOverride. The keyspace config it meets on the masters is the config this very
 // client applied during Init.
-func TestOSSClusterResetTopologyWithoutForceOverride(t *testing.T) {
+func TestOSSClusterReinitTopologyWithoutForceOverride(t *testing.T) {
 	cl := requireCluster(t)
 	ctx := context.Background()
 	_ = os.Setenv("POD_NAME", "no-override-reset")
@@ -584,18 +584,18 @@ func TestOSSClusterResetTopologyWithoutForceOverride(t *testing.T) {
 		}
 	}()
 
-	require.NoError(t, client.ResetTopology(ctx),
-		"ResetTopology must not trip over the config this client itself applied")
-	require.Equal(t, 1, rec.TopologyResetCount())
+	require.NoError(t, client.ReinitTopology(ctx),
+		"ReinitTopology must not trip over the config this client itself applied")
+	require.Equal(t, 1, rec.TopologyReinitCount())
 
 	require.NoError(t, client.Done(ctx))
 }
 
-// TestOSSClusterFailoverThenResetTopology covers #109 against a real failover: a replica is promoted
+// TestOSSClusterFailoverThenReinitTopology covers #109 against a real failover: a replica is promoted
 // to master. Keyspace config is per node, so the promoted node does not emit expiry events until
-// ResetTopology re-applies it and re-subscribes; afterwards a lock expiring on the new master must
+// ReinitTopology re-applies it and re-subscribes; afterwards a lock expiring on the new master must
 // reach the client.
-func TestOSSClusterFailoverThenResetTopology(t *testing.T) {
+func TestOSSClusterFailoverThenReinitTopology(t *testing.T) {
 	cl := requireCluster(t)
 	ctx := context.Background()
 
@@ -632,12 +632,12 @@ func TestOSSClusterFailoverThenResetTopology(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, vals[configs.NotifyKeyspaceEventsCmd], "promoted replica should start without keyspace config")
 
-	require.NoError(t, client.ResetTopology(ctx))
-	require.Equal(t, 1, rec.TopologyResetCount())
+	require.NoError(t, client.ReinitTopology(ctx))
+	require.Equal(t, 1, rec.TopologyReinitCount())
 
 	vals, err = newNode.ConfigGet(ctx, configs.NotifyKeyspaceEventsCmd).Result()
 	require.NoError(t, err)
-	require.NotEmpty(t, vals[configs.NotifyKeyspaceEventsCmd], "ResetTopology must enable keyspace events on the new master")
+	require.NotEmpty(t, vals[configs.NotifyKeyspaceEventsCmd], "ReinitTopology must enable keyspace events on the new master")
 	subs, err := pubSubPatternClients(newNode)
 	require.NoError(t, err)
 	require.Equal(t, 1, subs, "one subscription on the new master")
@@ -654,7 +654,7 @@ func TestOSSClusterFailoverThenResetTopology(t *testing.T) {
 }
 
 // TestOSSClusterKeyspaceSetupMetrics checks the per-master setup metric: with every master healthy
-// each one is recorded as a success on Init and again on ResetTopology, and none as a failure.
+// each one is recorded as a success on Init and again on ReinitTopology, and none as a failure.
 func TestOSSClusterKeyspaceSetupMetrics(t *testing.T) {
 	cl := requireCluster(t)
 	ctx := context.Background()
@@ -669,8 +669,8 @@ func TestOSSClusterKeyspaceSetupMetrics(t *testing.T) {
 	require.Equal(t, masters, rec.MasterKeyspaceSetupSuccessCount())
 	require.Equal(t, 0, rec.MasterKeyspaceSetupFailureCount())
 
-	require.NoError(t, client.ResetTopology(ctx))
-	require.Equal(t, 2*masters, rec.MasterKeyspaceSetupSuccessCount(), "ResetTopology re-applies config on every master")
+	require.NoError(t, client.ReinitTopology(ctx))
+	require.Equal(t, 2*masters, rec.MasterKeyspaceSetupSuccessCount(), "ReinitTopology re-applies config on every master")
 	require.NoError(t, client.Done(ctx))
 }
 

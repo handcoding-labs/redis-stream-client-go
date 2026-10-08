@@ -15,7 +15,7 @@ import (
 )
 
 // enableKeyspaceNotifsForExpiredEvents applies the expired-events keyspace config. When reapply is
-// true the caller is re-applying config it already applied itself (ResetTopology), so pre-existing
+// true the caller is re-applying config it already applied itself (ReinitTopology), so pre-existing
 // config on a node is expected rather than a conflict and the force-override guard is not enforced.
 func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsForExpiredEvents(ctx context.Context, reapply bool) error {
 	// subscribe to key space events for expiration only

@@ -299,21 +299,32 @@ func (r *RecoverableRedisStreamClient) Done(ctx context.Context) error {
 	return nil
 }
 
-// ResetTopology re-derives the cluster topology and re-establishes keyspace subscriptions.
+// ReinitTopology re-initializes the client against the cluster's current topology.
 //
 // In ClusterModeOSS, keyspace notifications fire only on the master that owns the expiring key, so
 // the client subscribes to every master. After a failover or resharding the set of masters changes;
-// callers should invoke ResetTopology to reload the cluster state and re-subscribe to the current
-// masters. In ClusterModeSingleShard this is a no-op.
-func (r *RecoverableRedisStreamClient) ResetTopology(ctx context.Context) error {
+// callers should invoke ReinitTopology to re-enable keyspace notifications on the current masters and
+// re-subscribe to them. In ClusterModeSingleShard this is a no-op.
+//
+// ReinitTopology only reads cluster state to decide whether it can proceed (see ensureClusterSettled).
+// If the cluster is not settled it returns an error wrapping errs.ErrClusterNotSettled without
+// touching the client, and it neither waits nor retries: when to try again is the caller's call.
+func (r *RecoverableRedisStreamClient) ReinitTopology(ctx context.Context) error {
 	if r.clusterMode != ClusterModeOSS {
 		return nil
 	}
 
 	cluster, ok := r.redisClient.(*redis.ClusterClient)
 	if !ok {
-		r.metricsRecorder.RecordTopologyReset(false)
+		r.metricsRecorder.RecordTopologyReinit(false)
 		return errs.ErrClusterClientRequired
+	}
+
+	// Initialize only from a cluster whose nodes agree on the topology. Otherwise the topology the
+	// client loads below comes from whichever node happens to answer, which may still be stale.
+	if err := r.ensureClusterSettled(ctx, cluster); err != nil {
+		r.metricsRecorder.RecordTopologyReinit(false)
+		return err
 	}
 
 	// reload the cluster's view of the topology (failover / resharding)
@@ -322,7 +333,7 @@ func (r *RecoverableRedisStreamClient) ResetTopology(ctx context.Context) error 
 	// re-enable keyspace notifications on (possibly new) masters. The existing masters already carry
 	// the config this client applied in Init, so the existing-config guard must not fire here.
 	if err := r.enableKeyspaceNotifsForExpiredEvents(ctx, true); err != nil {
-		r.metricsRecorder.RecordTopologyReset(false)
+		r.metricsRecorder.RecordTopologyReinit(false)
 		return err
 	}
 
@@ -330,7 +341,8 @@ func (r *RecoverableRedisStreamClient) ResetTopology(ctx context.Context) error 
 	r.oss.closeAll(r.logger)
 	r.subscribeToExpiredEvents(ctx)
 
-	r.metricsRecorder.RecordTopologyReset(true)
-	r.logger.Info("cluster topology reset and keyspace subscriptions rebuilt", "consumer_id", r.consumerID)
+	r.metricsRecorder.RecordTopologyReinit(true)
+	r.logger.Info("reinitialized for the current cluster topology; keyspace subscriptions rebuilt",
+		"consumer_id", r.consumerID)
 	return nil
 }

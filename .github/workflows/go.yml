@@ -161,7 +161,7 @@ jobs:
   # Integration tests against a real OSS Redis Cluster (3 masters + 3 replicas on localhost).
   # The "test" job above runs against a standalone Redis container and skips the cluster-only tests;
   # this job points the whole suite at a cluster instead (see test/scripts/redis-cluster.sh), which
-  # also exercises failover, per-master keyspace subscriptions and ResetTopology.
+  # also exercises failover, per-master keyspace subscriptions and ReinitTopology.
   test-cluster:
     name: Test (Redis Cluster)
     runs-on: ubuntu-latest

@@ -34,7 +34,7 @@ type PrometheusRecorder struct {
 	dlqRoutingTotal                 *prometheus.CounterVec
 	mutexAliveSkipTotal             *prometheus.CounterVec
 	ackAddGapTotal                  *prometheus.CounterVec
-	topologyResetTotal              *prometheus.CounterVec
+	topologyReinitTotal             *prometheus.CounterVec
 	masterKeyspaceSetupTotal        *prometheus.CounterVec
 
 	// internal state
@@ -141,9 +141,9 @@ func NewPrometheusRecorder(reg prometheus.Registerer) *PrometheusRecorder {
 			Help: "Total number of XACK-succeeded-but-XADD-failed events, labeled by stream.",
 		}, []string{"stream"}),
 
-		topologyResetTotal: factory.NewCounterVec(prometheus.CounterOpts{
-			Name: "redis_topology_reset_total",
-			Help: "Total number of cluster topology resets, labeled by success.",
+		topologyReinitTotal: factory.NewCounterVec(prometheus.CounterOpts{
+			Name: "redis_topology_reinit_total",
+			Help: "Total number of cluster topology re-initializations, labeled by success.",
 		}, []string{"success"}),
 
 		masterKeyspaceSetupTotal: factory.NewCounterVec(prometheus.CounterOpts{
@@ -226,8 +226,8 @@ func (p *PrometheusRecorder) RecordAckAddGap(streamName string) {
 	p.ackAddGapTotal.WithLabelValues(streamName).Inc()
 }
 
-func (p *PrometheusRecorder) RecordTopologyReset(success bool) {
-	p.topologyResetTotal.WithLabelValues(strconv.FormatBool(success)).Inc()
+func (p *PrometheusRecorder) RecordTopologyReinit(success bool) {
+	p.topologyReinitTotal.WithLabelValues(strconv.FormatBool(success)).Inc()
 }
 
 func (p *PrometheusRecorder) RecordMasterKeyspaceSetup(success bool) {
