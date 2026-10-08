@@ -174,7 +174,8 @@ and an `EXISTS`/`XACK`/`XADD` per recoverable message. Increase `ReconciliationI
 (see [METRICS.md](METRICS.md)).
 
 **ClusterModeOSS:** keyspace notifications and `XPENDING` scans run against every master; in OSS mode
-enable `notify-keyspace-events Ex` on all nodes and call `ResetTopology(ctx)` after failover/resharding.
+enable `notify-keyspace-events Ex` on all nodes and call `ReinitTopology(ctx)` after failover/resharding (it returns
+`errs.ErrClusterNotSettled` until the nodes agree on the topology; retry it then).
 
 ### Alert Thresholds
 

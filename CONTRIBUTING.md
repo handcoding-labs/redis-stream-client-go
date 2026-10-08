@@ -86,7 +86,7 @@ test(integration): add bulk notification tests
 ### Running Against a Redis Cluster
 
 The suite runs against a standalone Redis container by default. Tests that need a real OSS Redis
-Cluster (failover, per-master keyspace subscriptions, `ResetTopology`) are skipped unless
+Cluster (failover, per-master keyspace subscriptions, `ReinitTopology`) are skipped unless
 `REDIS_CLUSTER_ADDRS` is set. A local 3-master/3-replica cluster needs only `redis-server` (no Docker):
 
 ```bash

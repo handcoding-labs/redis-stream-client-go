@@ -18,7 +18,7 @@ This document describes each metric emitted by the library via the `metrics.Reco
 | `RecordDLQRouting(streamName string)` | A message exceeded `MaxRetries` and was routed to the DLQ. | Label: `stream`.
 | `RecordMutexAliveSkip(streamName string)` | Recovery skipped a pending message because its lock key still exists (owner alive but slow). | Label: `stream`. A high rate indicates slow consumers.
 | `RecordAckAddGap(streamName string)` | `XACK` succeeded but the subsequent `XADD` failed, dropping the message from the PEL without re-queueing it. | Label: `stream`. Should be rare; non-zero values warrant investigation.
-| `RecordTopologyReset(success bool)` | `ResetTopology` reloaded the cluster view and rebuilt keyspace subscriptions (`ClusterModeOSS`). | Label: `success`.
+| `RecordTopologyReinit(success bool)` | `ReinitTopology` ran (`ClusterModeOSS`). | Label: `success`; `false` also when the cluster was not settled (`errs.ErrClusterNotSettled`).
 
 ## Using with Prometheus
 

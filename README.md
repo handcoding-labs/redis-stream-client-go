@@ -52,7 +52,8 @@ Select the mode with `impl.WithClusterMode(...)`:
 - `impl.ClusterModeOSS` — OSS Redis Cluster. Requires the underlying client to be a
   `*redis.ClusterClient`. The client enables keyspace notifications and subscribes on **every
   master**, and the reconciliation scan is the authoritative recovery mechanism. After a failover or
-  resharding, call `ResetTopology(ctx)` to reload the cluster view and rebuild subscriptions.
+  resharding, call `ReinitTopology(ctx)` to re-initialize against the new topology (it fails with
+  `errs.ErrClusterNotSettled` if the cluster is not settled yet; see [Cluster Topology Changes](docs/USAGE.md#cluster-topology-changes-clustermodeoss)).
 
 ```go
 client, _ := impl.NewRedisStreamClient(

@@ -189,16 +189,37 @@ and rely solely on the periodic reconciliation scan (required in multi-shard clu
 
 ## Cluster Topology Changes (ClusterModeOSS)
 
-In `ClusterModeOSS`, call `ResetTopology` after a failover or resharding to reload the cluster view
-and rebuild keyspace subscriptions on the current set of masters:
+In `ClusterModeOSS`, call `ReinitTopology` after a failover or resharding. It re-initializes the
+client against the cluster's current topology: it re-enables keyspace notifications on the current
+masters and rebuilds the subscriptions on them. It does not reset or change the cluster, and it does
+not wait or retry.
+
+Before doing anything it checks that the cluster is **settled**. If it is not, it returns an error
+wrapping `errs.ErrClusterNotSettled` and leaves the client untouched; when to try again is up to you:
 
 ```go
-if err := client.ResetTopology(ctx); err != nil {
-    log.Error("topology reset failed", "error", err)
+err := client.ReinitTopology(ctx)
+switch {
+case err == nil:
+    // subscribed to the current masters
+case errors.Is(err, errs.ErrClusterNotSettled):
+    // the nodes do not agree on the topology yet (typically right after a failover); try again shortly
+default:
+    log.Error("reinitializing for the new topology failed", "error", err)
 }
 ```
 
-It is a no-op in `ClusterModeSingleShard`.
+"Settled" is deliberately a narrow, terminal check, the same two signals Redis itself offers:
+
+- every node that answers reports `cluster_state:ok` in `CLUSTER INFO`, and
+- all of those nodes report the same slot ownership in `CLUSTER NODES` (the "all nodes agree about
+  slots configuration" check that `redis-cli --cluster check` performs).
+
+Nodes that cannot be reached are left out of the comparison (after an automatic failover the old
+master is typically down); if none can be reached at all you get a connection error instead. Open
+(migrating/importing) slots, epochs and replica details are not examined. Redis has no single command
+that says "all nodes have converged", so this is the check, not a guarantee against every transient
+state. It is a no-op in `ClusterModeSingleShard`.
 
 ## Completing Stream Processing
 
