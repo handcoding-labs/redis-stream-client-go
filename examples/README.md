@@ -70,8 +70,9 @@ redisClient := redis.NewUniversalClient(&redis.UniversalOptions{
 // Enable keyspace notifications for expired events
 redisClient.ConfigSet(ctx, "notify-keyspace-events", "KEx")
 
-// Create Redis Stream Client
-client, err := impl.NewRedisStreamClient(redisClient, "my-service")
+// Create Redis Stream Client. WithForceConfigOverride is needed because the keyspace config is
+// already set above; without it Init refuses to start (ErrExistingConfigWithoutOverride).
+client, err := impl.NewRedisStreamClient(redisClient, "my-service", impl.WithForceConfigOverride())
 if err != nil {
    // handle error
 }

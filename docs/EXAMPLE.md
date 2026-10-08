@@ -41,11 +41,13 @@ func main() {
     // Enable keyspace notifications
     redisClient.ConfigSet(ctx, "notify-keyspace-events", "KEx")
 
-    // Create and initialize stream client
+    // Create and initialize stream client. WithForceConfigOverride is needed because the keyspace
+    // config is already set above; without it Init refuses to start (ErrExistingConfigWithoutOverride).
     // (show metrics recorder integration)
     // rec := prom.NewPrometheusRecorder(prometheus.DefaultRegisterer) // see examples/prometheus
-    // client, err := impl.NewRedisStreamClient(redisClient, "example-service", impl.WithMetricsRecorder(rec))
-    client, err := impl.NewRedisStreamClient(redisClient, "example-service")
+    // client, err := impl.NewRedisStreamClient(redisClient, "example-service",
+    //     impl.WithForceConfigOverride(), impl.WithMetricsRecorder(rec))
+    client, err := impl.NewRedisStreamClient(redisClient, "example-service", impl.WithForceConfigOverride())
     if err != nil {
         slog.Error("could not initialize", "error", err.Error())
         return
