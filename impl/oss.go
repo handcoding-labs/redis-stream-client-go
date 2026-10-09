@@ -15,7 +15,7 @@ import (
 // ossSubscriptions groups the per-master keyspace-notification subscriptions used in ClusterModeOSS.
 // In an OSS Redis Cluster keyspace notifications fire only on the master that owns the expiring key,
 // so the client subscribes on every master; this state tracks those subscriptions so they can be
-// torn down and rebuilt on topology changes (failover / resharding).
+// torn down and rebuilt on topology changes (failover, masters added or removed).
 type ossSubscriptions struct {
 	mu      sync.Mutex
 	pubSubs []*redis.PubSub
@@ -45,7 +45,7 @@ func (o *ossSubscriptions) closeAll(logger *slog.Logger) {
 // metric rather than aborting the whole sweep, since the periodic reconciliation scan is the
 // authoritative recovery path. A deterministic misconfiguration (existing config without force
 // override) is fatal and aborts immediately, as is the case where every master fails. reapply is set
-// by ResetTopology: the masters then already carry the config this client applied during Init, so
+// by ReinitTopology: the masters then already carry the config this client applied during Init, so
 // the existing-config guard is skipped.
 func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsOnMasters(
 	ctx context.Context,
@@ -95,7 +95,7 @@ func (r *RecoverableRedisStreamClient) enableKeyspaceNotifsOnMasters(
 }
 
 // subscribeToExpiredEventsOSS opens a keyspace subscription on every master node and tracks the
-// subscriptions so they can be torn down and rebuilt by ResetTopology.
+// subscriptions so they can be torn down and rebuilt by ReinitTopology.
 func (r *RecoverableRedisStreamClient) subscribeToExpiredEventsOSS(ctx context.Context) {
 	cluster, ok := r.redisClient.(*redis.ClusterClient)
 	if !ok {

@@ -20,7 +20,7 @@ func (r *MyRecorder) RecordReQueue(streamName string, success bool) {}
 func (r *MyRecorder) RecordDLQRouting(streamName string) {}
 func (r *MyRecorder) RecordMutexAliveSkip(streamName string) {}
 func (r *MyRecorder) RecordAckAddGap(streamName string) {}
-func (r *MyRecorder) RecordTopologyReset(success bool) {}
+func (r *MyRecorder) RecordTopologyReinit(success bool) {}
 ```
 
 `RecordClaimAttempt` is no longer emitted (kept on the interface for compatibility). Replace any
@@ -77,17 +77,20 @@ Requirements and notes:
 - The underlying client **must** be a `*redis.ClusterClient`; otherwise `Init` returns
   `errs.ErrClusterClientRequired`.
 - The client enables keyspace notifications and subscribes on every master node.
-- After a failover or resharding, call `client.ResetTopology(ctx)` to reload the cluster topology
-  and rebuild keyspace subscriptions.
+- When the set of masters changes (a failover, or a master added or removed), call
+  `client.ReinitTopology(ctx)` to re-initialize against the new topology and rebuild keyspace
+  subscriptions. Resharding between masters that are already subscribed does not need it; see
+  [USAGE.md](USAGE.md#cluster-topology-changes-clustermodeoss). It returns `errs.ErrClusterNotSettled` (without changing
+  anything) while the nodes still disagree about the topology; call it again later.
 - The default `ClusterModeSingleShard` is unchanged and remains correct for single-node,
   primary/replica, and Sentinel deployments.
 
-## 6. `RedisStreamClient` interface gained `ResetTopology`
+## 6. `RedisStreamClient` interface gained `ReinitTopology`
 
 If you implement the `types.RedisStreamClient` interface yourself (e.g. for mocks), add:
 
 ```go
-func (m *MyClient) ResetTopology(ctx context.Context) error { return nil }
+func (m *MyClient) ReinitTopology(ctx context.Context) error { return nil }
 ```
 
 ## 7. Message format note

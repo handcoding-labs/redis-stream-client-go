@@ -9,6 +9,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -63,45 +65,54 @@ func failoverShard(t *testing.T, cluster *redisgo.ClusterClient, shard clusterSh
 	require.NotEmpty(t, shard.replicas, "the shard needs a replica to fail over to")
 	oldNode, newNode = nodeClient(t, shard.master), nodeClient(t, shard.replicas[0])
 
+	allNodes := clusterNodeClients(t, cluster)
+
 	failover := func(to, from *redisgo.Client) {
-		converged := func() bool {
+		// A graceful failover only works when every node already agrees on the topology: the old
+		// master ignores the request from a node it does not (yet) list as its replica, and the
+		// election needs the voters to see the same epoch. Right after a role change that is not
+		// the case for a moment, and the request then just hangs until Redis gives up after 5s
+		// ("Manual failover timed out") while the old master has paused its writes. So request the
+		// failover only from a settled cluster, and then expect it to complete.
+		waitUntil(t, 90*time.Second, 100*time.Millisecond, func() (bool, string) {
+			if left := electionCooldownLeft(to); left > 0 {
+				return false, to.Options().Addr + " ran a failover election recently; waiting " + left.Round(time.Second).String()
+			}
+			if ok, why := clusterSettled(allNodes); !ok {
+				return false, why
+			}
+			if isMaster(to) || !replicaLinkUp(to) {
+				return false, to.Options().Addr + " is not an in-sync replica"
+			}
+			return true, ""
+		}, "cluster did not settle before the failover")
+
+		noteElection(to.Options().Addr)
+		require.NoError(t, to.ClusterFailover(context.Background()).Err())
+
+		waitUntil(t, 30*time.Second, 100*time.Millisecond, func() (bool, string) {
 			cluster.ReloadState(context.Background())
 			shards, err := loadClusterShards(cluster)
 			if err != nil {
-				return false
+				return false, err.Error()
 			}
 			for _, s := range shards {
 				if s.start == shard.start {
-					return s.master == to.Options().Addr && isMaster(to) && !isMaster(from)
+					if s.master == to.Options().Addr && isMaster(to) && !isMaster(from) {
+						return true, ""
+					}
+					return false, "slot range " + strconv.Itoa(s.start) + " is still owned by " + s.master + "\n" +
+						describeViews(from, to)
 				}
 			}
-			return false
-		}
+			return false, "shard not found"
+		}, "failover "+from.Options().Addr+" -> "+to.Options().Addr+" did not complete")
 
-		// Request the failover only once the old master regards the target as its replica and the
-		// target is in sync; otherwise the request is ignored and Redis gives up after 5s ("Manual
-		// failover timed out"). Keep re-requesting until the topology flips in case an attempt
-		// still aborts, but never while an earlier attempt can still be running.
-		var lastAttempt time.Time
-		require.Eventuallyf(t, func() bool {
-			if converged() {
-				return true
-			}
-			if time.Since(lastAttempt) > 7*time.Second && !isMaster(to) && replicaLinkUp(to) && masterSeesReplica(from, to) {
-				lastAttempt = time.Now()
-				if err := to.ClusterFailover(context.Background()).Err(); err != nil {
-					// the request itself was refused, so there is no attempt in flight: try again
-					lastAttempt = time.Time{}
-				}
-			}
-			return false
-		}, 60*time.Second, 200*time.Millisecond, "failover %s -> %s did not complete",
-			from.Options().Addr, to.Options().Addr)
-
-		require.Eventually(t, func() bool {
-			info, err := to.ClusterInfo(context.Background()).Result()
-			return err == nil && strings.Contains(info, "cluster_state:ok")
-		}, 30*time.Second, 200*time.Millisecond, "cluster did not return to state ok")
+		// Hand control back only once every node agrees on the new topology. Until then a client
+		// asking an arbitrary node for the topology (as ReinitTopology does) can get the old one.
+		waitUntil(t, 30*time.Second, 100*time.Millisecond, func() (bool, string) {
+			return clusterSettled(allNodes)
+		}, "cluster did not settle after the failover")
 	}
 
 	failover(newNode, oldNode)
@@ -152,27 +163,199 @@ func replicaLinkUp(node *redisgo.Client) bool {
 	return err == nil && strings.Contains(info, "master_link_status:up")
 }
 
-// masterSeesReplica reports whether master's view of the cluster lists replica as its own replica.
-// A master ignores a manual failover request from a node it does not (yet) regard as its replica,
-// which is the case for a moment after a role change, so the request would just time out.
-func masterSeesReplica(master, replica *redisgo.Client) bool {
-	nodes, err := master.ClusterNodes(context.Background()).Result()
-	if err != nil {
-		return false
+// A replica that has just run a failover election keeps stale election state for a while, and a
+// manual failover requested from it in that time stalls: the replica announces that it won without
+// holding a new election, the cluster does not promote it, and the old master stays paused until
+// Redis gives up after 5s ("Manual failover timed out"). Redis exposes no status for this, so the
+// tests record when each node last took part in a failover as the target and keep clear of reusing
+// it until a cool-down (a multiple of cluster-node-timeout) has passed.
+var electionLedger = struct {
+	sync.Mutex
+	last map[string]time.Time
+}{last: make(map[string]time.Time)}
+
+func noteElection(addr string) {
+	electionLedger.Lock()
+	defer electionLedger.Unlock()
+	electionLedger.last[addr] = time.Now()
+}
+
+// electionCooldownLeft returns how much longer node must be left alone before it can be the target
+// of another failover, 0 if it has not been one recently.
+func electionCooldownLeft(node *redisgo.Client) time.Duration {
+	electionLedger.Lock()
+	at, ok := electionLedger.last[node.Options().Addr]
+	electionLedger.Unlock()
+	if !ok {
+		return 0
 	}
-	var masterID string
-	for _, line := range strings.Split(nodes, "\n") {
-		if f := strings.Fields(line); len(f) > 3 && strings.Contains(f[2], "myself") {
-			masterID = f[0]
+	// the election retry window is 4x cluster-node-timeout; add a second of margin
+	nodeTimeout := 15 * time.Second // Redis default if the config cannot be read
+	if cfg, err := node.ConfigGet(context.Background(), "cluster-node-timeout").Result(); err == nil {
+		if ms, perr := strconv.Atoi(cfg["cluster-node-timeout"]); perr == nil {
+			nodeTimeout = time.Duration(ms) * time.Millisecond
 		}
 	}
-	for _, line := range strings.Split(nodes, "\n") {
+	if left := 4*nodeTimeout + time.Second - time.Since(at); left > 0 {
+		return left
+	}
+	return 0
+}
+
+// pickFailoverShard returns the shard to fail over. Among shards that have a replica it prefers one
+// whose replica has not been a failover target recently (so no cool-down wait is needed), then the
+// highest score, then the lowest slot range.
+func pickFailoverShard(t *testing.T, cluster *redisgo.ClusterClient, score func(clusterShard) int) clusterShard {
+	t.Helper()
+	var candidates []clusterShard
+	waitUntil(t, 30*time.Second, 100*time.Millisecond, func() (bool, string) {
+		cluster.ReloadState(context.Background())
+		shards, err := loadClusterShards(cluster)
+		if err != nil {
+			return false, err.Error()
+		}
+		candidates = candidates[:0]
+		for _, s := range shards {
+			if len(s.replicas) > 0 {
+				candidates = append(candidates, s)
+			}
+		}
+		return len(candidates) > 0, "no shard has a known, in-sync replica to fail over to"
+	}, "the cluster needs at least one replica to fail over to")
+
+	fresh := func(s clusterShard) bool { return electionCooldownLeft(nodeClient(t, s.replicas[0])) == 0 }
+	sc := func(s clusterShard) int {
+		if score == nil {
+			return 0
+		}
+		return score(s)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		a, b := candidates[i], candidates[j]
+		if fa, fb := fresh(a), fresh(b); fa != fb {
+			return fa
+		}
+		if sa, sb := sc(a), sc(b); sa != sb {
+			return sa > sb
+		}
+		return a.start < b.start
+	})
+	return candidates[0]
+}
+
+// waitUntil polls cond on the test goroutine until it holds, failing the test with cond's last
+// explanation if it does not within timeout.
+func waitUntil(t testing.TB, timeout, interval time.Duration, cond func() (bool, string), what string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		ok, why := cond()
+		if ok {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s within %v: %s", what, timeout, why)
+		}
+		time.Sleep(interval)
+	}
+}
+
+// clusterNodeClients returns a client for every node (masters and replicas) the cluster knows about.
+func clusterNodeClients(t *testing.T, cluster *redisgo.ClusterClient) []*redisgo.Client {
+	t.Helper()
+	raw, err := cluster.ClusterNodes(context.Background()).Result()
+	require.NoError(t, err)
+
+	var nodes []*redisgo.Client
+	for _, line := range strings.Split(raw, "\n") {
+		if f := strings.Fields(line); len(f) > 1 {
+			nodes = append(nodes, nodeClient(t, strings.SplitN(f[1], "@", 2)[0]))
+		}
+	}
+	require.NotEmpty(t, nodes)
+	return nodes
+}
+
+// nodeView reduces one node's CLUSTER NODES output to what every node must agree on before a
+// failover: each node's id, role, master, config epoch, link state and slots. The "myself" marker is
+// dropped because it differs per observer. It reports why the view is not usable if any node is
+// failing, still in handshake or disconnected.
+func nodeView(raw string) (view string, problem string) {
+	var rows []string
+	for _, line := range strings.Split(raw, "\n") {
 		f := strings.Fields(line)
-		if len(f) > 3 && strings.HasPrefix(f[1], replica.Options().Addr+"@") {
-			return strings.Contains(f[2], "slave") && f[3] == masterID
+		if len(f) < 8 {
+			continue
+		}
+		flags := strings.TrimPrefix(strings.ReplaceAll(f[2], "myself,", ""), "myself")
+		for _, bad := range []string{"fail", "handshake", "noaddr"} {
+			if strings.Contains(flags, bad) {
+				return "", f[1] + " is flagged " + f[2]
+			}
+		}
+		if f[7] != "connected" {
+			return "", f[1] + " link state is " + f[7]
+		}
+		// id, role, master id, config epoch, link state, slots
+		rows = append(rows, strings.Join(append([]string{f[0], flags, f[3], f[6], f[7]}, f[8:]...), " "))
+	}
+	sort.Strings(rows)
+	return strings.Join(rows, "\n"), ""
+}
+
+// clusterSettled reports whether every node is healthy and they all report the same cluster state,
+// current epoch and topology, i.e. no role change is still propagating.
+func clusterSettled(nodes []*redisgo.Client) (bool, string) {
+	ctx := context.Background()
+	var wantView, wantEpoch string
+	for i, n := range nodes {
+		addr := n.Options().Addr
+		info, err := n.ClusterInfo(ctx).Result()
+		if err != nil {
+			return false, addr + ": CLUSTER INFO: " + err.Error()
+		}
+		if !strings.Contains(info, "cluster_state:ok") {
+			return false, addr + ": cluster_state is not ok"
+		}
+		epoch := ""
+		for _, line := range strings.Split(info, "\n") {
+			if v, ok := strings.CutPrefix(strings.TrimSpace(line), "cluster_current_epoch:"); ok {
+				epoch = v
+			}
+		}
+		raw, err := n.ClusterNodes(ctx).Result()
+		if err != nil {
+			return false, addr + ": CLUSTER NODES: " + err.Error()
+		}
+		view, problem := nodeView(raw)
+		if problem != "" {
+			return false, addr + ": " + problem
+		}
+		if i == 0 {
+			wantView, wantEpoch = view, epoch
+			continue
+		}
+		if epoch != wantEpoch {
+			return false, addr + " reports epoch " + epoch + ", " + nodes[0].Options().Addr + " reports " + wantEpoch
+		}
+		if view != wantView {
+			return false, addr + " has a different topology than " + nodes[0].Options().Addr
 		}
 	}
-	return false
+	return true, ""
+}
+
+// describeViews renders what two nodes currently think the topology is, for failure messages.
+func describeViews(nodes ...*redisgo.Client) string {
+	var b strings.Builder
+	for _, n := range nodes {
+		raw, err := n.ClusterNodes(context.Background()).Result()
+		if err != nil {
+			raw = err.Error()
+		}
+		b.WriteString("view of " + n.Options().Addr + ":\n" + raw + "\n")
+	}
+	return b.String()
 }
 
 // isMaster reports whether the node currently has the master role.
@@ -294,7 +477,7 @@ func TestOSSClusterRecoversStreamsLockedOnEveryMaster(t *testing.T) {
 }
 
 // TestOSSClusterSubscriptionsAreNotLeaked covers #108/#109: exactly one pattern subscription per
-// master is open while the client runs, ResetTopology replaces (rather than adds to) them, and Done
+// master is open while the client runs, ReinitTopology replaces (rather than adds to) them, and Done
 // closes all of them.
 func TestOSSClusterSubscriptionsAreNotLeaked(t *testing.T) {
 	cl := requireCluster(t)
@@ -330,10 +513,10 @@ func TestOSSClusterSubscriptionsAreNotLeaked(t *testing.T) {
 	requireDelta(1, "one subscription per master after Init")
 
 	for i := 0; i < 3; i++ {
-		require.NoError(t, client.ResetTopology(ctx))
+		require.NoError(t, client.ReinitTopology(ctx))
 	}
-	require.Equal(t, 3, rec.TopologyResetCount())
-	requireDelta(1, "ResetTopology must replace subscriptions, not stack them")
+	require.Equal(t, 3, rec.TopologyReinitCount())
+	requireDelta(1, "ReinitTopology must replace subscriptions, not stack them")
 
 	require.NoError(t, client.Done(ctx))
 	requireDelta(0, "Done must close every per-master subscription")
@@ -380,11 +563,11 @@ func TestOSSClusterInitRefusesExistingConfigWithoutOverride(t *testing.T) {
 	}
 }
 
-// TestOSSClusterResetTopologyWithoutForceOverride: ResetTopology is documented as safe to call at any
+// TestOSSClusterReinitTopologyWithoutForceOverride: ReinitTopology is documented as safe to call at any
 // time (e.g. after a failover), so it must work for a client that did not opt in to
 // WithForceConfigOverride. The keyspace config it meets on the masters is the config this very
 // client applied during Init.
-func TestOSSClusterResetTopologyWithoutForceOverride(t *testing.T) {
+func TestOSSClusterReinitTopologyWithoutForceOverride(t *testing.T) {
 	cl := requireCluster(t)
 	ctx := context.Background()
 	_ = os.Setenv("POD_NAME", "no-override-reset")
@@ -401,18 +584,18 @@ func TestOSSClusterResetTopologyWithoutForceOverride(t *testing.T) {
 		}
 	}()
 
-	require.NoError(t, client.ResetTopology(ctx),
-		"ResetTopology must not trip over the config this client itself applied")
-	require.Equal(t, 1, rec.TopologyResetCount())
+	require.NoError(t, client.ReinitTopology(ctx),
+		"ReinitTopology must not trip over the config this client itself applied")
+	require.Equal(t, 1, rec.TopologyReinitCount())
 
 	require.NoError(t, client.Done(ctx))
 }
 
-// TestOSSClusterFailoverThenResetTopology covers #109 against a real failover: a replica is promoted
+// TestOSSClusterFailoverThenReinitTopology covers #109 against a real failover: a replica is promoted
 // to master. Keyspace config is per node, so the promoted node does not emit expiry events until
-// ResetTopology re-applies it and re-subscribes; afterwards a lock expiring on the new master must
+// ReinitTopology re-applies it and re-subscribes; afterwards a lock expiring on the new master must
 // reach the client.
-func TestOSSClusterFailoverThenResetTopology(t *testing.T) {
+func TestOSSClusterFailoverThenReinitTopology(t *testing.T) {
 	cl := requireCluster(t)
 	ctx := context.Background()
 
@@ -420,14 +603,7 @@ func TestOSSClusterFailoverThenResetTopology(t *testing.T) {
 	cluster := cl.newClusterClient(t)
 	t.Cleanup(func() { _ = cluster.Close() })
 
-	var shard clusterShard
-	for _, s := range clusterShards(t, cluster) {
-		if len(s.replicas) > 0 {
-			shard = s
-			break
-		}
-	}
-	require.NotEmpty(t, shard.replicas, "the cluster needs at least one replica to fail over to")
+	shard := pickFailoverShard(t, cluster, nil)
 
 	client, rec := createConsumer("111", cl)
 	opChan, err := client.Init(ctx)
@@ -456,12 +632,12 @@ func TestOSSClusterFailoverThenResetTopology(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, vals[configs.NotifyKeyspaceEventsCmd], "promoted replica should start without keyspace config")
 
-	require.NoError(t, client.ResetTopology(ctx))
-	require.Equal(t, 1, rec.TopologyResetCount())
+	require.NoError(t, client.ReinitTopology(ctx))
+	require.Equal(t, 1, rec.TopologyReinitCount())
 
 	vals, err = newNode.ConfigGet(ctx, configs.NotifyKeyspaceEventsCmd).Result()
 	require.NoError(t, err)
-	require.NotEmpty(t, vals[configs.NotifyKeyspaceEventsCmd], "ResetTopology must enable keyspace events on the new master")
+	require.NotEmpty(t, vals[configs.NotifyKeyspaceEventsCmd], "ReinitTopology must enable keyspace events on the new master")
 	subs, err := pubSubPatternClients(newNode)
 	require.NoError(t, err)
 	require.Equal(t, 1, subs, "one subscription on the new master")
@@ -478,7 +654,7 @@ func TestOSSClusterFailoverThenResetTopology(t *testing.T) {
 }
 
 // TestOSSClusterKeyspaceSetupMetrics checks the per-master setup metric: with every master healthy
-// each one is recorded as a success on Init and again on ResetTopology, and none as a failure.
+// each one is recorded as a success on Init and again on ReinitTopology, and none as a failure.
 func TestOSSClusterKeyspaceSetupMetrics(t *testing.T) {
 	cl := requireCluster(t)
 	ctx := context.Background()
@@ -493,8 +669,8 @@ func TestOSSClusterKeyspaceSetupMetrics(t *testing.T) {
 	require.Equal(t, masters, rec.MasterKeyspaceSetupSuccessCount())
 	require.Equal(t, 0, rec.MasterKeyspaceSetupFailureCount())
 
-	require.NoError(t, client.ResetTopology(ctx))
-	require.Equal(t, 2*masters, rec.MasterKeyspaceSetupSuccessCount(), "ResetTopology re-applies config on every master")
+	require.NoError(t, client.ReinitTopology(ctx))
+	require.Equal(t, 2*masters, rec.MasterKeyspaceSetupSuccessCount(), "ReinitTopology re-applies config on every master")
 	require.NoError(t, client.Done(ctx))
 }
 
@@ -505,7 +681,7 @@ func TestOSSClusterKeyspaceSetupMetrics(t *testing.T) {
 func TestOSSClusterLocksSurviveGracefulFailover(t *testing.T) {
 	cl := requireCluster(t)
 	ctx := context.Background()
-	const numStreams = 12
+	const numStreams = 30 // enough that any given shard owns some lock keys
 
 	cluster := cl.newClusterClient(t)
 	t.Cleanup(func() { _ = cluster.Close() })
@@ -536,13 +712,8 @@ func TestOSSClusterLocksSurviveGracefulFailover(t *testing.T) {
 		require.NoError(t, oerr)
 		perMaster[owner]++
 	}
-	var target clusterShard
-	for _, s := range clusterShards(t, cluster) {
-		if len(s.replicas) > 0 && perMaster[s.master] > perMaster[target.master] {
-			target = s
-		}
-	}
-	require.NotEmpty(t, target.master, "no shard with replicas owns a lock key")
+	target := pickFailoverShard(t, cluster, func(s clusterShard) int { return perMaster[s.master] })
+	require.Positive(t, perMaster[target.master], "the shard to fail over owns no lock key")
 	failoverShard(t, cluster, target)
 
 	// let several heartbeat periods and reconciliation scans go by on the new topology

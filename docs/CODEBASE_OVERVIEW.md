@@ -25,8 +25,8 @@ Key files to explore:
 `metrics.Recorder` can be implemented for real‑world monitoring.
 
 
-1. **`types/types.go`** – Defines the `RedisStreamClient` interface with methods `Init`, `Claim`, `Done`, `DoneStream`, `ResetTopology`, and `ID`.
-2. **`impl/relredis.go`** – Implements the interface through `RecoverableRedisStreamClient`, managing connections, locks, notifications, `Claim` (re-queue) and `ResetTopology`.
+1. **`types/types.go`** – Defines the `RedisStreamClient` interface with methods `Init`, `Claim`, `Done`, `DoneStream`, `ReinitTopology`, and `ID`.
+2. **`impl/relredis.go`** – Implements the interface through `RecoverableRedisStreamClient`, managing connections, locks, notifications, `Claim` (re-queue) and `ReinitTopology`.
 3. **`impl/opts.go`** – Functional options plus the `RecoveryConfig` and `ClusterMode` types.
 4. **`impl/init.go`** – Keyspace subscription (single-shard / all-masters), the LBS reading loop, and the periodic reconciliation scan (`runReconciliationLoop` / `reconcileLBS`).
 5. **`impl/helpers.go`** – The shared `reQueue` primitive (lock-liveness check, XACK-first dedup, XADD re-queue, DLQ routing) and retry-count/jitter helpers.

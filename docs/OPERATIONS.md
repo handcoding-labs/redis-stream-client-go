@@ -173,8 +173,13 @@ and an `EXISTS`/`XACK`/`XADD` per recoverable message. Increase `ReconciliationI
 `RecordReconciliationScan` / `RecordReQueue` / `RecordDLQRouting` / `RecordMutexAliveSkip` metrics
 (see [METRICS.md](METRICS.md)).
 
-**ClusterModeOSS:** keyspace notifications and `XPENDING` scans run against every master; in OSS mode
-enable `notify-keyspace-events Ex` on all nodes and call `ResetTopology(ctx)` after failover/resharding.
+**ClusterModeOSS:** keyspace notifications and `XPENDING` scans run against every master. Set
+`notify-keyspace-events KEx` in `redis.conf` on every node (and create the client with
+`impl.WithForceConfigOverride()`), and call `ReinitTopology(ctx)` whenever the set of masters changes
+(failover, a master added or removed, a master restarted without the config). It is not needed for
+replica changes, an old master rejoining as a replica, or resharding between existing masters. It
+returns `errs.ErrClusterNotSettled` until the nodes agree on the topology; retry it then. See
+[Cluster Topology Changes](USAGE.md#cluster-topology-changes-clustermodeoss).
 
 ### Alert Thresholds
 

@@ -427,9 +427,9 @@ func TestOSSClusterKeyspaceSubscription(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// topology reset should re-establish subscriptions without error
-	require.NoError(t, client.ResetTopology(context.Background()))
-	require.GreaterOrEqual(t, rec.TopologyResetCount(), 1)
+	// reinitializing for the topology should re-establish subscriptions without error
+	require.NoError(t, client.ReinitTopology(context.Background()))
+	require.GreaterOrEqual(t, rec.TopologyReinitCount(), 1)
 
 	require.NoError(t, client.Done(context.Background()))
 }

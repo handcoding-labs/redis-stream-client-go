@@ -28,4 +28,8 @@ var (
 	ErrAlreadyClaimed                = errors.New("already claimed")
 	ErrDataStreamNotFound            = errors.New("data stream not found")
 	ErrExistingConfigWithoutOverride = errors.New("existing configuration detected without force override option")
+	// ErrClusterNotSettled is returned by ReinitTopology when the cluster's nodes do not yet agree on
+	// the topology (or a node reports cluster_state other than ok). The client has changed nothing; wait
+	// for the cluster to settle and call ReinitTopology again.
+	ErrClusterNotSettled = errors.New("redis cluster is not settled")
 )

@@ -23,5 +23,5 @@ func (n *NoopRecorder) RecordReQueue(streamName string, success bool) {}
 func (n *NoopRecorder) RecordDLQRouting(streamName string)            {}
 func (n *NoopRecorder) RecordMutexAliveSkip(streamName string)        {}
 func (n *NoopRecorder) RecordAckAddGap(streamName string)             {}
-func (n *NoopRecorder) RecordTopologyReset(success bool)              {}
+func (n *NoopRecorder) RecordTopologyReinit(success bool)             {}
 func (n *NoopRecorder) RecordMasterKeyspaceSetup(success bool)        {}

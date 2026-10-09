@@ -45,8 +45,9 @@ Recovery is **cluster-safe** and **at-least-once**:
   suitable for single-node, primary/replica, and Sentinel deployments.
 - `ClusterModeOSS`: requires a `*redis.ClusterClient`. Keyspace notifications fire only on the master
   owning the expiring key, so the client enables notifications and subscribes on **every master**;
-  the reconciliation scan is the authoritative recovery mechanism. `ResetTopology(ctx)` reloads the
-  cluster view and rebuilds subscriptions after a failover or resharding.
+  the reconciliation scan is the authoritative recovery mechanism. `ReinitTopology(ctx)`
+  re-initializes the client against the current topology (and rebuilds subscriptions) when the set
+  of masters changes (a failover, or a master added or removed), provided the cluster is settled; otherwise it returns `errs.ErrClusterNotSettled`.
 
 > The scan uses `XPENDING ... IDLE`, which requires **Redis 6.2+**.
 

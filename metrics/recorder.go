@@ -41,9 +41,10 @@ type Recorder interface {
 	// RecordAckAddGap records the rare case where XACK succeeded but the subsequent XADD failed,
 	// leaving the message dropped from the PEL without being re-queued.
 	RecordAckAddGap(streamName string)
-	// RecordTopologyReset records an attempt to reset the cluster topology and re-subscribe to
-	// keyspace notifications (ClusterModeOSS only).
-	RecordTopologyReset(success bool)
+	// RecordTopologyReinit records an attempt to re-initialize for the current cluster topology and
+	// re-subscribe to keyspace notifications (ClusterModeOSS only). success is false when the
+	// attempt failed, including when the cluster was not settled (errs.ErrClusterNotSettled).
+	RecordTopologyReinit(success bool)
 	// RecordMasterKeyspaceSetup records the per-master outcome of enabling keyspace notifications
 	// across the cluster (ClusterModeOSS only). It makes partial failures — where some masters are
 	// configured and others are not — observable.

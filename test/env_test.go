@@ -65,7 +65,9 @@ func (r *testRedis) isCluster() bool {
 // otherwise a standalone client.
 func (r *testRedis) newClient() redisgo.UniversalClient {
 	if r.isCluster() {
-		return redisgo.NewClusterClient(&redisgo.ClusterOptions{Addrs: r.clusterAddrs})
+		// Each client gets its own copy: go-redis appends the nodes it discovers to the Addrs slice
+		// it is given, so sharing one backing array between clients is a data race.
+		return redisgo.NewClusterClient(&redisgo.ClusterOptions{Addrs: append([]string(nil), r.clusterAddrs...)})
 	}
 	return redisgo.NewUniversalClient(&redisgo.UniversalOptions{Addrs: []string{r.addr}, DB: 0})
 }

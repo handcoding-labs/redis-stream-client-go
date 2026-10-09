@@ -37,10 +37,18 @@ type RedisStreamClient interface {
 	//
 	// should be called when consumer is done processing a particular data stream.
 	DoneStream(ctx context.Context, dataStreamName string) error
-	// ResetTopology re-derives the cluster topology and re-establishes keyspace subscriptions.
+	// ReinitTopology re-initializes the client against the cluster's current topology: it re-enables
+	// keyspace notifications on the current masters and rebuilds the per-master subscriptions.
+	//
+	// It never changes the cluster's topology (no failover, no slot or node changes) and it does not
+	// wait or retry; its only write is the keyspace-notification config that Init also applies. It first checks that
+	// the cluster is settled, meaning every reachable node reports cluster_state:ok and they all agree
+	// on which node owns which slots; if not it returns an error wrapping errs.ErrClusterNotSettled
+	// and leaves the client as it was, and the caller decides when to try again.
 	//
 	// Only meaningful in ClusterModeOSS, where keyspace notifications fire per-master and the set
-	// of masters can change after failover/resharding. Callers should invoke this when they detect
-	// a topology change. It is a no-op in ClusterModeSingleShard.
-	ResetTopology(ctx context.Context) error
+	// of masters can change, for example after a failover or when a master is added or removed. Callers
+	// should invoke this when they detect such a change; resharding between existing masters does not
+	// need it. It is a no-op in ClusterModeSingleShard.
+	ReinitTopology(ctx context.Context) error
 }

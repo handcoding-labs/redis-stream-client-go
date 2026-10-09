@@ -18,7 +18,7 @@ const (
 	OpXPending                   RedisOp = "reading pending LBS messages"
 	OpReQueue                    RedisOp = "re-queuing LBS message"
 	OpRouteDLQ                   RedisOp = "routing message to DLQ"
-	OpResetTopology              RedisOp = "resetting cluster topology"
+	OpReinitTopology             RedisOp = "reinitializing for cluster topology"
 )
 
 func (op RedisOp) String() string {

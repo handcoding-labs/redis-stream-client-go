@@ -11,8 +11,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `impl.WithClusterMode(impl.ClusterModeSingleShard | impl.ClusterModeOSS)`. In `ClusterModeOSS`
     the client enables keyspace notifications and subscribes on every master node
     ([#108](https://github.com/handcoding-labs/redis-stream-client-go/issues/108)).
-  - `RedisStreamClient.ResetTopology(ctx)` to reload the cluster view and rebuild keyspace
-    subscriptions after failover/resharding
+  - `RedisStreamClient.ReinitTopology(ctx)` to re-initialize against the current topology and rebuild
+    keyspace subscriptions after a failover or when a master is added or removed (see
+    `docs/USAGE.md` for when to call it; resharding between existing masters does not need it). It only proceeds when the cluster is settled
+    (every answering node reports `cluster_state:ok` and they all agree on slot ownership); otherwise
+    it returns the new sentinel `errs.ErrClusterNotSettled` without changing anything
     ([#109](https://github.com/handcoding-labs/redis-stream-client-go/issues/109)).
 - **Periodic reconciliation scan** that recovers pending LBS messages whose owning consumer is dead,
   configurable via `impl.WithRecoveryConfig(impl.RecoveryConfig{...})`
@@ -25,7 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (default 10000; `0` disables the cap) so it cannot grow unbounded
   ([#106](https://github.com/handcoding-labs/redis-stream-client-go/issues/106)).
 - New metrics on `metrics.Recorder`: `RecordReconciliationScan`, `RecordReQueue`,
-  `RecordDLQRouting`, `RecordMutexAliveSkip`, `RecordAckAddGap`, `RecordTopologyReset`
+  `RecordDLQRouting`, `RecordMutexAliveSkip`, `RecordAckAddGap`, `RecordTopologyReinit`
   ([#113](https://github.com/handcoding-labs/redis-stream-client-go/issues/113)).
 - Integration tests for the mutex-liveness check, XACK-first dedup, multi-shard recovery, DLQ
   routing, and (infra-gated) OSS cluster keyspace subscription
@@ -54,7 +57,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Breaking changes
 - `metrics.Recorder` gained new methods; custom implementations must implement them. See
   `docs/MIGRATION.md`.
-- `types.RedisStreamClient` gained `ResetTopology(ctx) error`.
+- `types.RedisStreamClient` gained `ReinitTopology(ctx) error`.
 - Recovery requires **Redis 6.2+** (the scan uses `XPENDING ... IDLE`).
 
 See [`docs/MIGRATION.md`](docs/MIGRATION.md) for upgrade steps.
