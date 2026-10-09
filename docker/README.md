@@ -61,7 +61,9 @@ docker-compose run --rm security
 
 ### `redis.conf`
 Optimized Redis configuration for stream workloads:
-- Keyspace notifications enabled
+- Keyspace notifications enabled (`notify-keyspace-events KEx`). Because the config is already set, clients
+  that connect to this Redis must be created with `impl.WithForceConfigOverride()`; without it `Init`
+  returns `errs.ErrExistingConfigWithoutOverride`. The examples already do this.
 - Stream-specific optimizations
 - Memory and persistence settings
 - Performance tuning

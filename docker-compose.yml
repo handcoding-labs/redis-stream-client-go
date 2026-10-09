@@ -8,6 +8,8 @@ services:
     container_name: redis-stream-dev
     ports:
       - "6379:6379"
+    # notify-keyspace-events is preset here, so a client connecting to this Redis must be created
+    # with impl.WithForceConfigOverride(); without it Init fails with ErrExistingConfigWithoutOverride.
     command: redis-server --notify-keyspace-events KEx --appendonly yes
     volumes:
       - redis_data:/data
