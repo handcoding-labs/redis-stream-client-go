@@ -8,6 +8,7 @@ package test
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"sort"
 	"strconv"
@@ -649,6 +650,89 @@ func TestOSSClusterFailoverThenReinitTopology(t *testing.T) {
 	log.mu.Lock()
 	require.Contains(t, log.seen[notifs.StreamExpired], dataStream)
 	log.mu.Unlock()
+
+	require.NoError(t, client.Done(ctx))
+}
+
+// TestOSSClusterReinitTopologyRefusesUnsettledCluster runs ReinitTopology against a real cluster in
+// which the nodes disagree. A replica is told to forget the master of another shard (CLUSTER
+// FORGET), so in its view that shard's slots have no owner and it reports cluster_state:fail, while
+// the rest of the cluster is fine and the replica stays linked to its own master. ReinitTopology must
+// refuse with ErrClusterNotSettled, record the failure and leave the client as it was; once the
+// replica has learned about the master again it must succeed.
+//
+// A replica taken out of the cluster altogether (CLUSTER RESET) is not the case to test: CLUSTER SLOTS
+// stops listing it, so the client no longer sees it, and replicas do not publish expired events anyway.
+func TestOSSClusterReinitTopologyRefusesUnsettledCluster(t *testing.T) {
+	cl := requireCluster(t)
+	ctx := context.Background()
+
+	cluster := cl.newClusterClient(t)
+	t.Cleanup(func() { _ = cluster.Close() })
+
+	nodes := clusterNodeClients(t, cluster)
+	waitUntil(t, 30*time.Second, 200*time.Millisecond, func() (bool, string) { return clusterSettled(nodes) },
+		"the cluster did not settle before the test")
+
+	shards := clusterShards(t, cluster)
+	require.GreaterOrEqual(t, len(shards), 2)
+	require.NotEmpty(t, shards[0].replicas)
+	victim := nodeClient(t, shards[0].replicas[0])
+	forgotten := nodeClient(t, shards[1].master)
+	forgottenID, err := forgotten.Do(ctx, "CLUSTER", "MYID").Text()
+	require.NoError(t, err)
+
+	// subscriptions left behind by earlier tests are still open on the master, so compare against them
+	baseline, err := pubSubPatternClients(forgotten)
+	require.NoError(t, err)
+
+	client, rec := createConsumer("222", cl)
+	opChan, err := client.Init(ctx)
+	require.NoError(t, err)
+	log := newNotifLog()
+	log.drain(opChan)
+	require.Eventually(t, func() bool {
+		n, perr := pubSubPatternClients(forgotten)
+		return perr == nil && n-baseline == 1
+	}, 5*time.Second, 100*time.Millisecond, "Init must subscribe once on the master")
+
+	// rejoin makes the replica learn the master again. It is registered as a cleanup first so that a
+	// failure part-way never leaves the shared cluster broken for the tests that follow.
+	rejoined := false
+	rejoin := func() {
+		if rejoined {
+			return
+		}
+		rejoined = true
+		host, port, serr := net.SplitHostPort(shards[1].master)
+		require.NoError(t, serr)
+		// MEET is asynchronous, and the replica re-learns the slots from the master's gossip
+		require.NoError(t, victim.Do(ctx, "CLUSTER", "MEET", host, port).Err())
+		waitUntil(t, 60*time.Second, 200*time.Millisecond, func() (bool, string) { return clusterSettled(nodes) },
+			"the cluster did not settle after the replica was told about the master again")
+	}
+	t.Cleanup(rejoin)
+
+	require.NoError(t, victim.Do(ctx, "CLUSTER", "FORGET", forgottenID).Err())
+	info, err := victim.ClusterInfo(ctx).Result()
+	require.NoError(t, err)
+	require.Contains(t, info, "cluster_state:fail", "with a shard's slots unowned the replica must report that it cannot serve")
+
+	err = client.ReinitTopology(ctx)
+	require.ErrorIs(t, err, errs.ErrClusterNotSettled, "views: %s", describeViews(forgotten, victim))
+	require.Equal(t, 1, rec.TopologyReinitCount())
+	require.Equal(t, 1, rec.TopologyReinitFailureCount(), "the refusal must be recorded as a failed reinit")
+
+	// the refusal changed nothing: the client kept its subscription on the master
+	subsAfter, err := pubSubPatternClients(forgotten)
+	require.NoError(t, err)
+	require.Equal(t, baseline+1, subsAfter, "a refused ReinitTopology must not touch the subscriptions")
+
+	rejoin()
+
+	require.NoError(t, client.ReinitTopology(ctx), "ReinitTopology must succeed once the cluster has settled again")
+	require.Equal(t, 2, rec.TopologyReinitCount())
+	require.Equal(t, 1, rec.TopologyReinitFailureCount())
 
 	require.NoError(t, client.Done(ctx))
 }
