@@ -162,7 +162,7 @@ func (r *RecoverableRedisStreamClient) ID() string {
 // process the messages.
 func (r *RecoverableRedisStreamClient) Init(ctx context.Context) (<-chan notifs.RecoverableRedisNotification, error) {
 	// ClusterModeOSS requires a cluster client so that we can subscribe to keyspace notifications
-	// on every master and reload topology on failover/resharding.
+	// on every master and reload topology after a failover or when masters are added or removed.
 	if r.clusterMode == ClusterModeOSS {
 		if _, ok := r.redisClient.(*redis.ClusterClient); !ok {
 			return nil, errs.ErrClusterClientRequired
@@ -302,9 +302,9 @@ func (r *RecoverableRedisStreamClient) Done(ctx context.Context) error {
 // ReinitTopology re-initializes the client against the cluster's current topology.
 //
 // In ClusterModeOSS, keyspace notifications fire only on the master that owns the expiring key, so
-// the client subscribes to every master. After a failover or resharding the set of masters changes;
-// callers should invoke ReinitTopology to re-enable keyspace notifications on the current masters and
-// re-subscribe to them. In ClusterModeSingleShard this is a no-op.
+// the client subscribes to every master. When the set of masters changes (a failover, or a master
+// added or removed), callers should invoke ReinitTopology to re-enable keyspace notifications on
+// the current masters and re-subscribe to them. In ClusterModeSingleShard this is a no-op.
 //
 // ReinitTopology only reads cluster state to decide whether it can proceed (see ensureClusterSettled).
 // If the cluster is not settled it returns an error wrapping errs.ErrClusterNotSettled without
@@ -327,7 +327,7 @@ func (r *RecoverableRedisStreamClient) ReinitTopology(ctx context.Context) error
 		return err
 	}
 
-	// reload the cluster's view of the topology (failover / resharding)
+	// reload the cluster's view of the topology (after a failover or a change in the set of masters)
 	cluster.ReloadState(ctx)
 
 	// re-enable keyspace notifications on (possibly new) masters. The existing masters already carry

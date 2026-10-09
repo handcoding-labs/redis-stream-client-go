@@ -15,7 +15,7 @@ import (
 // ossSubscriptions groups the per-master keyspace-notification subscriptions used in ClusterModeOSS.
 // In an OSS Redis Cluster keyspace notifications fire only on the master that owns the expiring key,
 // so the client subscribes on every master; this state tracks those subscriptions so they can be
-// torn down and rebuilt on topology changes (failover / resharding).
+// torn down and rebuilt on topology changes (failover, masters added or removed).
 type ossSubscriptions struct {
 	mu      sync.Mutex
 	pubSubs []*redis.PubSub

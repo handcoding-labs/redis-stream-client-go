@@ -77,8 +77,10 @@ Requirements and notes:
 - The underlying client **must** be a `*redis.ClusterClient`; otherwise `Init` returns
   `errs.ErrClusterClientRequired`.
 - The client enables keyspace notifications and subscribes on every master node.
-- After a failover or resharding, call `client.ReinitTopology(ctx)` to re-initialize against the new
-  topology and rebuild keyspace subscriptions. It returns `errs.ErrClusterNotSettled` (without changing
+- When the set of masters changes (a failover, or a master added or removed), call
+  `client.ReinitTopology(ctx)` to re-initialize against the new topology and rebuild keyspace
+  subscriptions. Resharding between masters that are already subscribed does not need it; see
+  [USAGE.md](USAGE.md#cluster-topology-changes-clustermodeoss). It returns `errs.ErrClusterNotSettled` (without changing
   anything) while the nodes still disagree about the topology; call it again later.
 - The default `ClusterModeSingleShard` is unchanged and remains correct for single-node,
   primary/replica, and Sentinel deployments.

@@ -47,7 +47,8 @@ type RedisStreamClient interface {
 	// and leaves the client as it was, and the caller decides when to try again.
 	//
 	// Only meaningful in ClusterModeOSS, where keyspace notifications fire per-master and the set
-	// of masters can change after failover/resharding. Callers should invoke this when they detect
-	// a topology change. It is a no-op in ClusterModeSingleShard.
+	// of masters can change, for example after a failover or when a master is added or removed. Callers
+	// should invoke this when they detect such a change; resharding between existing masters does not
+	// need it. It is a no-op in ClusterModeSingleShard.
 	ReinitTopology(ctx context.Context) error
 }
