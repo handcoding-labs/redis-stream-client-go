@@ -27,6 +27,7 @@ type testMetricsRecorder struct {
 	mutexAliveSkipCount     int
 	ackAddGapCount          int
 	topologyResetCount      int
+	topologyReinitFailures  int
 
 	masterKeyspaceSetupSuccess int
 	masterKeyspaceSetupFailure int
@@ -129,6 +130,9 @@ func (t *testMetricsRecorder) RecordTopologyReinit(success bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.topologyResetCount++
+	if !success {
+		t.topologyReinitFailures++
+	}
 }
 
 func (t *testMetricsRecorder) RecordMasterKeyspaceSetup(success bool) {
@@ -254,6 +258,13 @@ func (t *testMetricsRecorder) TopologyReinitCount() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.topologyResetCount
+}
+
+// TopologyReinitFailureCount is how many of the recorded ReinitTopology attempts failed.
+func (t *testMetricsRecorder) TopologyReinitFailureCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.topologyReinitFailures
 }
 
 func (t *testMetricsRecorder) MasterKeyspaceSetupSuccessCount() int {
