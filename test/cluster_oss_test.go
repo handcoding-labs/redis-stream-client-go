@@ -111,7 +111,7 @@ func failoverShard(t *testing.T, cluster *redisgo.ClusterClient, shard clusterSh
 
 		// Hand control back only once every node agrees on the new topology. Until then a client
 		// asking an arbitrary node for the topology (as ReinitTopology does) can get the old one.
-		waitUntil(t, 30*time.Second, 100*time.Millisecond, func() (bool, string) {
+		waitUntil(t, 60*time.Second, 100*time.Millisecond, func() (bool, string) {
 			return clusterSettled(allNodes)
 		}, "cluster did not settle after the failover")
 	}
@@ -706,9 +706,11 @@ func TestOSSClusterReinitTopologyRefusesUnsettledCluster(t *testing.T) {
 		rejoined = true
 		host, port, serr := net.SplitHostPort(shards[1].master)
 		require.NoError(t, serr)
-		// MEET is asynchronous, and the replica re-learns the slots from the master's gossip
+		// MEET is asynchronous, and the replica re-learns the slots from the master's gossip. Redis bans
+		// a forgotten node for 60s, and the cluster can stay down until the ban lapses, so the wait
+		// must clearly outlast it.
 		require.NoError(t, victim.Do(ctx, "CLUSTER", "MEET", host, port).Err())
-		waitUntil(t, 60*time.Second, 200*time.Millisecond, func() (bool, string) { return clusterSettled(nodes) },
+		waitUntil(t, 120*time.Second, 200*time.Millisecond, func() (bool, string) { return clusterSettled(nodes) },
 			"the cluster did not settle after the replica was told about the master again")
 	}
 	t.Cleanup(rejoin)
