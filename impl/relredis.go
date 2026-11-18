@@ -14,8 +14,8 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
+	"github.com/handcoding-labs/redis-stream-client-go/internal/notifs"
 	"github.com/handcoding-labs/redis-stream-client-go/metrics"
-	"github.com/handcoding-labs/redis-stream-client-go/notifs"
 	"github.com/handcoding-labs/redis-stream-client-go/types"
 	"github.com/handcoding-labs/redis-stream-client-go/types/errs"
 )
@@ -47,8 +47,6 @@ type RecoverableRedisStreamClient struct {
 	serviceName string
 	// redis pub sub subscription
 	pubSub *redis.PubSub
-	// outputChan is the channel exposed to clients on which we relay all messages
-	outputChan chan notifs.RecoverableRedisNotification
 	// rs is a shared redsync instance used for distributed locks
 	rs *redsync.Redsync
 	// lbsIdleTime is the time after which a message is considered idle
@@ -81,6 +79,8 @@ type RecoverableRedisStreamClient struct {
 	recoveryConfig RecoveryConfig
 	// oss holds the per-master keyspace subscriptions opened in ClusterModeOSS
 	oss ossSubscriptions
+	// senders is the wait group that controls all senders to notification broker
+	senders *sync.WaitGroup
 }
 
 // NewRedisStreamClient creates a new RedisStreamClient
@@ -115,7 +115,6 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string,
 		hbInterval:        configs.DefaultHBInterval,
 		streamLocks:       make(map[string]*StreamLocksInfo),
 		serviceName:       serviceName,
-		outputChan:        make(chan notifs.RecoverableRedisNotification, configs.DefaultOutputChanSize),
 		rs:                rs,
 		lbsIdleTime:       configs.DefaultLBSIdleTime,
 		lbsRecoveryCount:  configs.DefaultLBSRecoveryCount,
@@ -128,6 +127,7 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string,
 		metricsRecorder:   &metrics.NoopRecorder{},
 		clusterMode:       ClusterModeSingleShard,
 		recoveryConfig:    DefaultRecoveryConfig(),
+		senders:           &sync.WaitGroup{},
 	}
 
 	for _, opt := range opts {
@@ -144,7 +144,7 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string,
 	}
 
 	// init the notification broker
-	r.notificationBroker = notifs.NewNotificationBroker(r.outputChan, configs.DefaultOutputChanSize)
+	r.notificationBroker = notifs.NewNotificationBroker(r.outputChanSize)
 
 	return r, nil
 }
@@ -186,17 +186,28 @@ func (r *RecoverableRedisStreamClient) Init(ctx context.Context) (<-chan notifs.
 		return nil, errs.NewRedisError(errs.OpCreateLBSStream, err)
 	}
 
+	//init starts three routines:
+	// one routine reads lbs stream continuously
+	// one routine listens to ksp notifications which is edge triggered system
+	// one routine that run reconciliation which is level triggered system
+
 	// start blocking read on LBS stream
-	go r.readLBSStream(newCtx)
+	r.senders.Go(func() {
+		go r.readLBSStream(newCtx)
+	})
 
 	// listen to ksp chan
-	go r.listenKsp(newCtx)
+	r.senders.Go(func() {
+		go r.listenKsp(newCtx)
+	})
 
 	// start the periodic reconciliation scan which recovers pending LBS messages whose owning
 	// consumer has died. The first pass runs immediately (replacing the old startup recovery).
-	go r.runReconciliationLoop(newCtx)
+	r.senders.Go(func() {
+		go r.runReconciliationLoop(newCtx)
+	})
 
-	return r.outputChan, nil
+	return r.notificationBroker.Output(), nil
 }
 
 // Claim recovers a data stream whose owning consumer is presumed dead.

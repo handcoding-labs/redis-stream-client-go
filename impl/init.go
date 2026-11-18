@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
-	"github.com/handcoding-labs/redis-stream-client-go/notifs"
+	"github.com/handcoding-labs/redis-stream-client-go/internal/notifs"
 	"github.com/handcoding-labs/redis-stream-client-go/types/errs"
 
 	"github.com/go-redsync/redsync/v4"
@@ -318,11 +318,14 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(
 			r.metricsRecorder.RecordStreamProcessingStart(lbsInfo.DataStreamName, time.Now())
 
 			// now, keep extending the lock in a separate go routine
-			go func() {
-				if err := r.startExtendingKey(ctx, redsyncMutex, lbsInfo, lbsMessage.Info); err != nil {
-					r.logger.Error("Error extending key", "error", err, "stream", lbsInfo.DataStreamName)
-				}
-			}()
+			// and this can also send notifications so add this to r.senders
+			r.senders.Go(func() {
+				go func() {
+					if err := r.startExtendingKey(ctx, redsyncMutex, lbsInfo, lbsMessage.Info); err != nil {
+						r.logger.Error("Error extending key", "error", err, "stream", lbsInfo.DataStreamName)
+					}
+				}()
+			})
 		}
 	}
 

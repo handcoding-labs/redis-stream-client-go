@@ -3,7 +3,7 @@ package types
 import (
 	"context"
 
-	"github.com/handcoding-labs/redis-stream-client-go/notifs"
+	"github.com/handcoding-labs/redis-stream-client-go/internal/notifs"
 )
 
 // RedisStreamClient is an interface for a Redis Stream client

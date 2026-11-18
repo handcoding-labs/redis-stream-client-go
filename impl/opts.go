@@ -7,7 +7,6 @@ import (
 
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
 	"github.com/handcoding-labs/redis-stream-client-go/metrics"
-	"github.com/handcoding-labs/redis-stream-client-go/notifs"
 	"github.com/handcoding-labs/redis-stream-client-go/types/errs"
 )
 
@@ -137,7 +136,7 @@ func WithOutputChanSize(size int) RecoverableRedisOption {
 			return errs.ErrInvalidOutputChanSize
 		}
 
-		r.outputChan = make(chan notifs.RecoverableRedisNotification, size)
+		r.outputChanSize = size
 		return nil
 	}
 }

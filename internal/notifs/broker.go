@@ -14,16 +14,16 @@ var (
 
 type NotificationBroker struct {
 	input  chan RecoverableRedisNotification
-	output chan<- RecoverableRedisNotification
+	output chan RecoverableRedisNotification
 	wg     *sync.WaitGroup
 	closed atomic.Bool
 	quit   chan struct{}
 }
 
-func NewNotificationBroker(output chan<- RecoverableRedisNotification, bufferSize int) *NotificationBroker {
+func NewNotificationBroker(bufferSize int) *NotificationBroker {
 	b := &NotificationBroker{
 		input:  make(chan RecoverableRedisNotification, bufferSize),
-		output: output,
+		output: make(chan RecoverableRedisNotification, bufferSize),
 		wg:     &sync.WaitGroup{},
 		quit:   make(chan struct{}),
 	}
@@ -85,4 +85,8 @@ func (b *NotificationBroker) Close() {
 
 	// close output channel
 	close(b.output)
+}
+
+func (b *NotificationBroker) Output() <-chan RecoverableRedisNotification {
+	return b.output
 }

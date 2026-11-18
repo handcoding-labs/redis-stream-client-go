@@ -33,11 +33,14 @@ func (r *RecoverableRedisStreamClient) cleanup() error {
 		<-r.kspChan
 	}
 
-	// close the output channel
-	r.notificationBroker.Close()
-
-	// cancel LBS context
+	// cancel the context first so that routines start exiting and we wait for them
 	r.lbsCtxCancelFunc()
+
+	// wait for all routines to exit
+	r.senders.Wait()
+
+	// safe to close the output channel
+	r.notificationBroker.Close()
 
 	// close single-shard pub sub (nil in ClusterModeOSS)
 	if r.pubSub != nil {
