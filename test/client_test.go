@@ -402,35 +402,6 @@ func TestBlockingRead(t *testing.T) {
 	require.Equal(t, 0, rec.ClaimCount(), "blocking read claim count")
 }
 
-// TestDoneReturnsWhileLBSIdle checks that Done returns when no message ever arrives on the LBS
-// stream. Done waits for the read loop to exit, and go-redis does not interrupt a blocking
-// XREADGROUP on context cancellation, so the read must block for a bounded time.
-func TestDoneReturnsWhileLBSIdle(t *testing.T) {
-	ctx := context.TODO()
-	redisContainer := setupSuite(t)
-
-	consumer, _ := createConsumer("done-idle", redisContainer)
-	opChan, err := consumer.Init(ctx)
-	require.NoError(t, err)
-
-	// let the read loop park in XREADGROUP
-	time.Sleep(500 * time.Millisecond)
-
-	done := make(chan error, 1)
-	go func() { done <- consumer.Done(ctx) }()
-
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(2*configs.DefaultLBSReadBlock + time.Second):
-		t.Fatal("Done did not return while the LBS stream was idle")
-	}
-
-	// the output channel is closed once Done returns
-	for range opChan {
-	}
-}
-
 func TestKspNotifs(t *testing.T) {
 	ctx := context.TODO()
 	redisContainer := setupSuite(t)

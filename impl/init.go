@@ -3,7 +3,6 @@ package impl
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"time"
 
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
@@ -181,85 +180,6 @@ func (r *RecoverableRedisStreamClient) reconcileLBS(ctx context.Context, startup
 		r.logger.Info("reconciliation scan complete",
 			"requeued", requeued, "skipped_alive", skippedAlive, "dlq_routed", dlqRouted,
 			"duration_seconds", time.Since(start).Seconds())
-	}
-}
-
-func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
-	consecutiveErrors := 0
-	currentRetryDelay := r.initialRetryDelay
-
-	for {
-		// check if context is done
-		if r.isContextDone(ctx) {
-			r.notificationBroker.Send(ctx, notifs.MakeStreamTerminatedNotif("context done"))
-			return
-		}
-
-		// Blocking read on the LBS stream, bounded rather than forever (Block: 0): go-redis does not
-		// interrupt a blocking XREADGROUP when ctx is canceled, so an unbounded read would keep this
-		// goroutine parked until the next LBS message arrived, and Done, which waits for every
-		// sender to exit before closing the output channel, would hang.
-		res := r.redisClient.XReadGroup(ctx, &redis.XReadGroupArgs{
-			Group:    r.lbsGroupName(),
-			Consumer: r.consumerID,
-			Streams:  []string{r.lbsName(), configs.PendingMsgID},
-			Block:    configs.DefaultLBSReadBlock,
-		})
-
-		// redis.Nil means the block timed out with no new messages: not an error, just re-check ctx.
-		if errors.Is(res.Err(), redis.Nil) {
-			continue
-		}
-
-		if res.Err() != nil {
-			if errors.Is(res.Err(), context.Canceled) {
-				r.notificationBroker.Send(ctx, notifs.MakeStreamTerminatedNotif(context.Canceled.Error()))
-				return
-			}
-
-			consecutiveErrors++
-			r.logger.Error("error while reading from LBS",
-				"error", res.Err(),
-				"consecutive_errors", consecutiveErrors,
-				"retry_delay", currentRetryDelay)
-
-			if r.maxRetries >= 0 && consecutiveErrors > r.maxRetries {
-				r.logger.Error("max retries exceeded, terminating stream",
-					"max_retries", r.maxRetries,
-					"consecutive_errors", consecutiveErrors)
-				r.notificationBroker.Send(ctx, notifs.MakeStreamTerminatedNotif(res.Err().Error()))
-				return
-			}
-
-			// sleep with exponential backoff before retrying
-			select {
-			case <-ctx.Done():
-				r.notificationBroker.Send(ctx, notifs.MakeStreamTerminatedNotif(context.Canceled.Error()))
-				return
-			case <-time.After(currentRetryDelay):
-				// calculate next retry delay with exponential backoff
-				currentRetryDelay = currentRetryDelay * 2
-				if currentRetryDelay > r.maxRetryDelay {
-					currentRetryDelay = r.maxRetryDelay
-				}
-			}
-
-			continue
-		}
-
-		// successful read - reset error tracking
-		if consecutiveErrors > 0 {
-			r.logger.Info("LBS stream read recovered after errors",
-				"consecutive_errors", consecutiveErrors)
-			consecutiveErrors = 0
-			currentRetryDelay = r.initialRetryDelay
-		}
-
-		if err := r.processLBSMessages(ctx, res.Val(), r.rs); err != nil {
-			r.logger.Error("fatal error while processing lbs messages", "error", err)
-			r.notificationBroker.Send(ctx, notifs.MakeStreamTerminatedNotif(err.Error()))
-			return
-		}
 	}
 }
 
