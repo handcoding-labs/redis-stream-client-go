@@ -164,9 +164,14 @@ func (r *RecoverableRedisStreamClient) readLBS(ctx context.Context, reads chan<-
 			}
 
 			// Drop the connection: after a failover or a slot move the LBS stream may now live on
-			// another node, so the next attempt pins a fresh one.
+			// another node, so the next attempt pins a fresh one. A dedicated connection bypasses
+			// the cluster client's own MOVED handling, so ask it to refresh the topology now; the
+			// reload runs in the background and finishes well within the retry delay.
 			conn.close()
 			conn = nil
+			if cluster, ok := r.redisClient.(*redis.ClusterClient); ok {
+				cluster.ReloadState(ctx)
+			}
 
 			consecutiveErrors++
 			r.logger.Error("error while reading from LBS",

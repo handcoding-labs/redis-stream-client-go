@@ -302,7 +302,13 @@ func (r *RecoverableRedisStreamClient) startExtendingKey(
 		}
 		r.metricsRecorder.RecordLockExtensionAttempt(lbsInfo.DataStreamName, true)
 
-		time.Sleep(r.hbInterval / 2)
+		// wait for the next extension, but not past cancellation: Done waits for this goroutine
+		select {
+		case <-ctx.Done():
+			r.logger.Info("context done, exiting", "consumer_id", r.consumerID)
+			return nil
+		case <-time.After(r.hbInterval / 2):
+		}
 	}
 }
 
