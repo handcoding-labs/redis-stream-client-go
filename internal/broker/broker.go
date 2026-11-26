@@ -77,7 +77,7 @@ func (b *NotificationBroker) Send(ctx context.Context, m notifs.RecoverableRedis
 }
 
 // StopAccepting makes every later Send return false without closing anything. Done calls it before
-// cancelling the senders, so goroutines exiting because of a caller-initiated shutdown don't emit
+// canceling the senders, so goroutines exiting because of a caller-initiated shutdown don't emit
 // StreamTerminated notifications. Notifications already accepted are still delivered by Close.
 func (b *NotificationBroker) StopAccepting() {
 	b.closed.Store(true)
