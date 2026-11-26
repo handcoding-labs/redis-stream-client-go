@@ -76,6 +76,13 @@ func (b *NotificationBroker) Send(ctx context.Context, m notifs.RecoverableRedis
 	}
 }
 
+// StopAccepting makes every later Send return false without closing anything. Done calls it before
+// cancelling the senders, so goroutines exiting because of a caller-initiated shutdown don't emit
+// StreamTerminated notifications. Notifications already accepted are still delivered by Close.
+func (b *NotificationBroker) StopAccepting() {
+	b.closed.Store(true)
+}
+
 // Close stops accepting notifications, delivers everything already accepted, and closes the
 // output channel. It is safe to call more than once and from several goroutines: later calls
 // wait for the first one to finish and then return without closing anything again.

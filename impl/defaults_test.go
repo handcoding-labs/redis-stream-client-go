@@ -14,14 +14,17 @@ func TestOutputChannelBufferedByDefault(t *testing.T) {
 	t.Setenv(configs.PodName, "default-buffer")
 
 	rc := redis.NewClient(&redis.Options{Addr: "localhost:0"})
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	c, err := NewRedisStreamClient(rc, "default-buffer")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	r := c.(*RecoverableRedisStreamClient)
+	r, ok := c.(*RecoverableRedisStreamClient)
+	if !ok {
+		t.Fatalf("NewRedisStreamClient returned %T, want *RecoverableRedisStreamClient", c)
+	}
 	defer r.notificationBroker.Close()
 
 	if got := cap(r.notificationBroker.Output()); got != configs.DefaultOutputChanSize {

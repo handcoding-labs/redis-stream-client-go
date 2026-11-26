@@ -33,6 +33,10 @@ func (r *RecoverableRedisStreamClient) cleanup() error {
 		<-r.kspChan
 	}
 
+	// the caller asked to stop, so goroutines that exit from here on must not report it back as
+	// StreamTerminated notifications
+	r.notificationBroker.StopAccepting()
+
 	// cancel the context first so that routines start exiting and we wait for them
 	r.lbsCtxCancelFunc()
 

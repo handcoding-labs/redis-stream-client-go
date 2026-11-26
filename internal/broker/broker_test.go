@@ -112,3 +112,29 @@ func TestCloseIsIdempotent(t *testing.T) {
 		t.Fatal("output channel still open after Close")
 	}
 }
+
+// TestStopAcceptingRejectsNewSendsButKeepsAccepted checks that after StopAccepting, Send is
+// rejected while notifications accepted earlier are still delivered by Close.
+func TestStopAcceptingRejectsNewSendsButKeepsAccepted(t *testing.T) {
+	b := NewNotificationBroker(4)
+
+	if !b.Send(context.Background(), notifs.RecoverableRedisNotification{Type: notifs.StreamAdded}) {
+		t.Fatal("Send before StopAccepting returned false")
+	}
+
+	b.StopAccepting()
+
+	if b.Send(context.Background(), notifs.MakeStreamTerminatedNotif("context done")) {
+		t.Fatal("Send after StopAccepting returned true")
+	}
+
+	b.Close()
+
+	var got []notifs.NotificationType
+	for n := range b.Output() {
+		got = append(got, n.Type)
+	}
+	if len(got) != 1 || got[0] != notifs.StreamAdded {
+		t.Fatalf("delivered %v, want only the StreamAdded accepted before StopAccepting", got)
+	}
+}
