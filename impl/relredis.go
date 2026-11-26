@@ -193,18 +193,18 @@ func (r *RecoverableRedisStreamClient) Init(ctx context.Context) (<-chan notifs.
 
 	// start blocking read on LBS stream
 	r.senders.Go(func() {
-		go r.readLBSStream(newCtx)
+		r.readLBSStream(newCtx)
 	})
 
 	// listen to ksp chan
 	r.senders.Go(func() {
-		go r.listenKsp(newCtx)
+		r.listenKsp(newCtx)
 	})
 
 	// start the periodic reconciliation scan which recovers pending LBS messages whose owning
 	// consumer has died. The first pass runs immediately (replacing the old startup recovery).
 	r.senders.Go(func() {
-		go r.runReconciliationLoop(newCtx)
+		r.runReconciliationLoop(newCtx)
 	})
 
 	return r.notificationBroker.Output(), nil

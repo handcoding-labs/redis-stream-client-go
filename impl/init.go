@@ -195,13 +195,21 @@ func (r *RecoverableRedisStreamClient) readLBSStream(ctx context.Context) {
 			return
 		}
 
-		// blocking read on LBS stream
+		// Blocking read on the LBS stream, bounded rather than forever (Block: 0): go-redis does not
+		// interrupt a blocking XREADGROUP when ctx is canceled, so an unbounded read would keep this
+		// goroutine parked until the next LBS message arrived, and Done, which waits for every
+		// sender to exit before closing the output channel, would hang.
 		res := r.redisClient.XReadGroup(ctx, &redis.XReadGroupArgs{
 			Group:    r.lbsGroupName(),
 			Consumer: r.consumerID,
 			Streams:  []string{r.lbsName(), configs.PendingMsgID},
-			Block:    0,
+			Block:    configs.DefaultLBSReadBlock,
 		})
+
+		// redis.Nil means the block timed out with no new messages: not an error, just re-check ctx.
+		if errors.Is(res.Err(), redis.Nil) {
+			continue
+		}
 
 		if res.Err() != nil {
 			if errors.Is(res.Err(), context.Canceled) {
@@ -320,11 +328,9 @@ func (r *RecoverableRedisStreamClient) processLBSMessages(
 			// now, keep extending the lock in a separate go routine
 			// and this can also send notifications so add this to r.senders
 			r.senders.Go(func() {
-				go func() {
-					if err := r.startExtendingKey(ctx, redsyncMutex, lbsInfo, lbsMessage.Info); err != nil {
-						r.logger.Error("Error extending key", "error", err, "stream", lbsInfo.DataStreamName)
-					}
-				}()
+				if err := r.startExtendingKey(ctx, redsyncMutex, lbsInfo, lbsMessage.Info); err != nil {
+					r.logger.Error("Error extending key", "error", err, "stream", lbsInfo.DataStreamName)
+				}
 			})
 		}
 	}

@@ -47,7 +47,10 @@ func (b *NotificationBroker) run() {
 						b.output <- m
 					}
 				default:
-					close(b.input)
+					// input is deliberately never closed: it has many senders, and a Send that
+					// passed its closed check just before Close would otherwise panic with
+					// "send on closed channel". Such a late Send either sees quit or lands in
+					// the buffer and is dropped; the channel is garbage collected with the broker.
 					return
 				}
 			}
