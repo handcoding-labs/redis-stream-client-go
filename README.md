@@ -448,7 +448,7 @@ err := client.Done(ctx)
 
 This method calls `DoneStream` for all active streams and then performs additional cleanup like closing channels and canceling contexts. The internal `NotificationBroker` ensures all pending notifications are drained before the output channel is closed.
 
-`Done` does not close the Redis client you passed in. Close it after `Done` returns: the consumer's blocking read on the LBS stream is not interrupted by cancellation, and until its connection is closed it can still be handed one newly added message, which is then recovered by the reconciliation scan after `MinIdleTime` (and uses one retry). See [Shutdown and the Redis connection](docs/USAGE.md#shutdown-and-the-redis-connection).
+`Done` does not close the Redis client you passed in; you own it. On shutdown the client interrupts its blocking read on the LBS stream with `CLIENT UNBLOCK`, so `Done` returns within milliseconds and leaves no read parked on the server. If your Redis user may not run `CLIENT UNBLOCK`, `Done` can take up to 2s; see [Shutdown and the Redis connection](docs/USAGE.md#shutdown-and-the-redis-connection).
 
 Method `ID()` can be used to obtain client ID for logging purposes:
 
