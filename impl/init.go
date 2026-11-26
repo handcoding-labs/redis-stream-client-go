@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
-	"github.com/handcoding-labs/redis-stream-client-go/internal/notifs"
+	"github.com/handcoding-labs/redis-stream-client-go/notifs"
 	"github.com/handcoding-labs/redis-stream-client-go/types/errs"
 
 	"github.com/go-redsync/redsync/v4"

@@ -5,7 +5,7 @@ import (
 	"strconv"
 
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
-	"github.com/handcoding-labs/redis-stream-client-go/internal/notifs"
+	"github.com/handcoding-labs/redis-stream-client-go/notifs"
 	"github.com/handcoding-labs/redis-stream-client-go/types/errs"
 )
 

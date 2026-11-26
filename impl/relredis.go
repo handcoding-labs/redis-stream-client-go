@@ -14,8 +14,9 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/handcoding-labs/redis-stream-client-go/configs"
-	"github.com/handcoding-labs/redis-stream-client-go/internal/notifs"
+	"github.com/handcoding-labs/redis-stream-client-go/internal/broker"
 	"github.com/handcoding-labs/redis-stream-client-go/metrics"
+	"github.com/handcoding-labs/redis-stream-client-go/notifs"
 	"github.com/handcoding-labs/redis-stream-client-go/types"
 	"github.com/handcoding-labs/redis-stream-client-go/types/errs"
 )
@@ -64,7 +65,7 @@ type RecoverableRedisStreamClient struct {
 	// forceOverrideConfig indicates if the library should override existing keyspace notifications config
 	forceOverrideConfig bool
 	// NotificationBroker handles all messaging to clients
-	notificationBroker *notifs.NotificationBroker
+	notificationBroker *broker.NotificationBroker
 	// maxRetries is the maximum number of retries for LBS stream read errors
 	maxRetries int
 	// initialRetryDelay is the initial delay before retrying after an error
@@ -128,6 +129,7 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string,
 		clusterMode:       ClusterModeSingleShard,
 		recoveryConfig:    DefaultRecoveryConfig(),
 		senders:           &sync.WaitGroup{},
+		outputChanSize:    configs.DefaultOutputChanSize,
 	}
 
 	for _, opt := range opts {
@@ -144,7 +146,7 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string,
 	}
 
 	// init the notification broker
-	r.notificationBroker = notifs.NewNotificationBroker(r.outputChanSize)
+	r.notificationBroker = broker.NewNotificationBroker(r.outputChanSize)
 
 	return r, nil
 }

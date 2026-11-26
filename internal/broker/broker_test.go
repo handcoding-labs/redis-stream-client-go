@@ -1,4 +1,4 @@
-package notifs
+package broker
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/handcoding-labs/redis-stream-client-go/notifs"
 )
 
 // TestSendRacingCloseDoesNotPanic hammers Send from many goroutines while Close runs. The broker
@@ -39,7 +41,7 @@ func TestSendRacingCloseDoesNotPanic(t *testing.T) {
 				<-start
 				deadline := time.Now().Add(200 * time.Microsecond)
 				for time.Now().Before(deadline) {
-					b.Send(context.Background(), RecoverableRedisNotification{Type: StreamAdded})
+					b.Send(context.Background(), notifs.RecoverableRedisNotification{Type: notifs.StreamAdded})
 				}
 			})
 		}
@@ -61,14 +63,14 @@ func TestSendAfterCloseIsRejected(t *testing.T) {
 	b := NewNotificationBroker(4)
 
 	for range 3 {
-		if !b.Send(context.Background(), RecoverableRedisNotification{Type: StreamAdded}) {
+		if !b.Send(context.Background(), notifs.RecoverableRedisNotification{Type: notifs.StreamAdded}) {
 			t.Fatal("Send before Close returned false")
 		}
 	}
 
 	b.Close()
 
-	if b.Send(context.Background(), RecoverableRedisNotification{Type: StreamAdded}) {
+	if b.Send(context.Background(), notifs.RecoverableRedisNotification{Type: notifs.StreamAdded}) {
 		t.Fatal("Send after Close returned true")
 	}
 
@@ -78,5 +80,35 @@ func TestSendAfterCloseIsRejected(t *testing.T) {
 	}
 	if got != 3 {
 		t.Fatalf("delivered %d notifications, want 3", got)
+	}
+}
+
+// TestCloseIsIdempotent checks that Close can be called again, including concurrently, without
+// panicking on a second close of the output channel.
+func TestCloseIsIdempotent(t *testing.T) {
+	b := NewNotificationBroker(4)
+
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("concurrent Close panicked: %v", r)
+				}
+			}()
+			b.Close()
+		})
+	}
+	wg.Wait()
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Close after Close panicked: %v", r)
+		}
+	}()
+	b.Close()
+
+	if _, ok := <-b.Output(); ok {
+		t.Fatal("output channel still open after Close")
 	}
 }
