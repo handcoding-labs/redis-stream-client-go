@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Shutdown could panic with "send on closed channel": `Done` closed the notification broker before cancelling the goroutines that send to it, and the broker closed its multi-sender input channel. `Done` now cancels and waits for every sender before closing the output channel, and the broker no longer closes its input channel.
+- `Done` no longer hangs while the LBS stream is idle. The LBS read used `Block: 0`, which go-redis does not interrupt on context cancellation; it now blocks for at most `configs.DefaultLBSReadBlock` (2s) per read, which also bounds shutdown latency.
+
 ### Added
 - **Redis Cluster (OSS) support** ([#60](https://github.com/handcoding-labs/redis-stream-client-go/issues/60)).
   - `impl.WithClusterMode(impl.ClusterModeSingleShard | impl.ClusterModeOSS)`. In `ClusterModeOSS`
@@ -59,6 +63,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `docs/MIGRATION.md`.
 - `types.RedisStreamClient` gained `ReinitTopology(ctx) error`.
 - Recovery requires **Redis 6.2+** (the scan uses `XPENDING ... IDLE`).
+- `NotificationBroker` moved from `notifs` to an internal package, so the broker that owns the output channel can no longer be created or closed outside the client ([#123](https://github.com/handcoding-labs/redis-stream-client-go/issues/123)). `notifs.NewNotificationBroker`, `notifs.ErrContextDone` and `notifs.ErrAlreadyClosed` are removed. The notification types (`RecoverableRedisNotification`, `LBSInfo`, `LBSInputMessage`) stay in `notifs`.
 
 See [`docs/MIGRATION.md`](docs/MIGRATION.md) for upgrade steps.
 

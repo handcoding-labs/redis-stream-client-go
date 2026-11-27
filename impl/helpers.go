@@ -33,11 +33,18 @@ func (r *RecoverableRedisStreamClient) cleanup() error {
 		<-r.kspChan
 	}
 
-	// close the output channel
-	r.notificationBroker.Close()
+	// the caller asked to stop, so goroutines that exit from here on must not report it back as
+	// StreamTerminated notifications
+	r.notificationBroker.StopAccepting()
 
-	// cancel LBS context
+	// cancel the context first so that routines start exiting and we wait for them
 	r.lbsCtxCancelFunc()
+
+	// wait for all routines to exit
+	r.senders.Wait()
+
+	// safe to close the output channel
+	r.notificationBroker.Close()
 
 	// close single-shard pub sub (nil in ClusterModeOSS)
 	if r.pubSub != nil {
