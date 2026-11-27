@@ -49,6 +49,7 @@ func TestLBS(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, opChan2)
 
+	waitForLBSReaders(t, redisContainer, 2)
 	addNStreamsToLBS(t, redisContainer, 2)
 
 	// load balanced stream distributes messages to different consumers in a load balanced way
@@ -770,6 +771,7 @@ func TestMainFlow(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, opChan2)
 
+	waitForLBSReaders(t, redisContainer, 2)
 	addNStreamsToLBS(t, redisContainer, 2)
 
 	simpleRedisClient := newRedisClient(redisContainer)
@@ -1016,6 +1018,56 @@ func TestReconciliationToleratesMalformedPendingMessage(t *testing.T) {
 	require.NoError(t, err)
 	_, ok := <-opChan
 	require.False(t, ok)
+}
+
+// waitForLBSReaders waits until n clients are blocked in XREADGROUP on the node that serves the LBS
+// stream. Redis hands each new LBS entry to a consumer that is already blocked, so a test that adds
+// entries before every consumer is reading can see one consumer take all of them. Redis does not list
+// a blocked consumer in XINFO CONSUMERS until it is served, so the check counts blocked clients.
+func waitForLBSReaders(t *testing.T, redisContainer *testRedis, n int) {
+	t.Helper()
+	ctx := context.Background()
+	client := newRedisClient(redisContainer)
+	defer func() { _ = client.Close() }()
+
+	var node *redisgo.Client
+	switch c := client.(type) {
+	case *redisgo.ClusterClient:
+		var err error
+		node, err = c.MasterForKey(ctx, "consumer"+configs.InputSuffix)
+		require.NoError(t, err)
+	case *redisgo.Client:
+		node = c
+	default:
+		t.Fatalf("unexpected client type %T", client)
+	}
+
+	waitUntil(t, 10*time.Second, 10*time.Millisecond, func() (bool, string) {
+		list, err := node.ClientList(ctx).Result()
+		if err != nil {
+			return false, err.Error()
+		}
+		blocked := 0
+		for _, line := range strings.Split(list, "\n") {
+			fields := strings.Fields(line)
+			isBlocked, isRead := false, false
+			for _, f := range fields {
+				if v, ok := strings.CutPrefix(f, "flags="); ok && strings.Contains(v, "b") {
+					isBlocked = true
+				}
+				if f == "cmd=xreadgroup" {
+					isRead = true
+				}
+			}
+			if isBlocked && isRead {
+				blocked++
+			}
+		}
+		if blocked < n {
+			return false, fmt.Sprintf("%d of %d consumers blocked in XREADGROUP", blocked, n)
+		}
+		return true, ""
+	}, "LBS readers ready")
 }
 
 func addNStreamsToLBS(t *testing.T, redisContainer *testRedis, n int) {

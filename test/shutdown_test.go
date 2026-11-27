@@ -84,7 +84,11 @@ func TestDoneFallsBackWhenClientUnblockIsDenied(t *testing.T) {
 	// go-redis only authenticates when a password is set, so the user needs one
 	const user, password = "rsc-no-unblock", "rsc-no-unblock-pass"
 	require.NoError(t, admin.Do(ctx, "ACL", "SETUSER", user, "reset", "on", ">"+password, "~*", "&*", "+@all", "-client|unblock").Err())
-	t.Cleanup(func() { _ = admin.Do(context.Background(), "ACL", "DELUSER", user).Err() })
+	t.Cleanup(func() {
+		if err := admin.Do(context.Background(), "ACL", "DELUSER", user).Err(); err != nil {
+			t.Logf("deleting ACL user %s: %v", user, err)
+		}
+	})
 
 	var logs []string
 	capture := &captureHandler{output: &logs}

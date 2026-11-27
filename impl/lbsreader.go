@@ -106,7 +106,9 @@ func (r *RecoverableRedisStreamClient) openLBSConn(ctx context.Context, readerDo
 		ticker := time.NewTicker(configs.LBSUnblockRetryInterval)
 		defer ticker.Stop()
 		for {
-			_ = node.ClientUnblock(context.Background(), id).Err()
+			if err := node.ClientUnblock(context.Background(), id).Err(); err != nil {
+				r.logger.Debug("CLIENT UNBLOCK for the LBS reader failed; retrying until it exits", "error", err)
+			}
 			select {
 			case <-readerDone:
 				return
@@ -134,8 +136,7 @@ func (r *RecoverableRedisStreamClient) readLBS(ctx context.Context, reads chan<-
 		}
 	}()
 
-	consecutiveErrors := 0
-	currentRetryDelay := r.initialRetryDelay
+	backoff := lbsBackoff{delay: r.initialRetryDelay}
 
 	for {
 		if r.isContextDone(ctx) {
@@ -162,54 +163,21 @@ func (r *RecoverableRedisStreamClient) readLBS(ctx context.Context, reads chan<-
 			if r.isContextDone(ctx) {
 				return
 			}
-
 			// Drop the connection: after a failover or a slot move the LBS stream may now live on
-			// another node, so the next attempt pins a fresh one. A dedicated connection bypasses
-			// the cluster client's own MOVED handling, so ask it to refresh the topology now; the
-			// reload runs in the background and finishes well within the retry delay.
+			// another node, so the next attempt pins a fresh one.
 			conn.close()
 			conn = nil
-			if cluster, ok := r.redisClient.(*redis.ClusterClient); ok {
-				cluster.ReloadState(ctx)
+			if r.retryLBSRead(ctx, err, reads, &backoff) {
+				continue
 			}
-
-			consecutiveErrors++
-			r.logger.Error("error while reading from LBS",
-				"error", err,
-				"consecutive_errors", consecutiveErrors,
-				"retry_delay", currentRetryDelay)
-
-			if r.maxRetries >= 0 && consecutiveErrors > r.maxRetries {
-				r.logger.Error("max retries exceeded, terminating stream",
-					"max_retries", r.maxRetries,
-					"consecutive_errors", consecutiveErrors)
-				select {
-				case reads <- lbsRead{err: err}:
-				case <-ctx.Done():
-				}
-				return
-			}
-
-			// sleep with exponential backoff before retrying
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(currentRetryDelay):
-				currentRetryDelay = currentRetryDelay * 2
-				if currentRetryDelay > r.maxRetryDelay {
-					currentRetryDelay = r.maxRetryDelay
-				}
-			}
-
-			continue
+			return
 		}
 
 		// successful read - reset error tracking
-		if consecutiveErrors > 0 {
+		if backoff.errors > 0 {
 			r.logger.Info("LBS stream read recovered after errors",
-				"consecutive_errors", consecutiveErrors)
-			consecutiveErrors = 0
-			currentRetryDelay = r.initialRetryDelay
+				"consecutive_errors", backoff.errors)
+			backoff = lbsBackoff{delay: r.initialRetryDelay}
 		}
 
 		// If the client stops here, the messages just read stay in this consumer's pending list and
@@ -227,9 +195,56 @@ func (r *RecoverableRedisStreamClient) readLBS(ctx context.Context, reads chan<-
 	}
 }
 
+// lbsBackoff tracks consecutive LBS read errors and the delay before the next attempt.
+type lbsBackoff struct {
+	errors int
+	delay  time.Duration
+}
+
+// retryLBSRead handles a failed LBS read. It reports whether the reader should try again; when it
+// returns false the reader exits, after handing the error to the processor if retries ran out.
+func (r *RecoverableRedisStreamClient) retryLBSRead(ctx context.Context, err error, reads chan<- lbsRead,
+	backoff *lbsBackoff) bool {
+	// A dedicated connection bypasses the cluster client's own MOVED handling, so ask it to refresh
+	// the topology now; the reload runs in the background and finishes well within the retry delay.
+	if cluster, ok := r.redisClient.(*redis.ClusterClient); ok {
+		cluster.ReloadState(ctx)
+	}
+
+	backoff.errors++
+	r.logger.Error("error while reading from LBS",
+		"error", err,
+		"consecutive_errors", backoff.errors,
+		"retry_delay", backoff.delay)
+
+	if r.maxRetries >= 0 && backoff.errors > r.maxRetries {
+		r.logger.Error("max retries exceeded, terminating stream",
+			"max_retries", r.maxRetries,
+			"consecutive_errors", backoff.errors)
+		select {
+		case reads <- lbsRead{err: err}:
+		case <-ctx.Done():
+		}
+		return false
+	}
+
+	// sleep with exponential backoff before retrying
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(backoff.delay):
+		backoff.delay *= 2
+		if backoff.delay > r.maxRetryDelay {
+			backoff.delay = r.maxRetryDelay
+		}
+		return true
+	}
+}
+
 // processLBSStream takes each batch from the reader, acquires locks and notifies the caller. It is
 // the only LBS goroutine that sends notifications.
-func (r *RecoverableRedisStreamClient) processLBSStream(ctx context.Context, reads <-chan lbsRead, processed chan<- struct{}) {
+func (r *RecoverableRedisStreamClient) processLBSStream(ctx context.Context, reads <-chan lbsRead,
+	processed chan<- struct{}) {
 	for {
 		select {
 		case <-ctx.Done():
