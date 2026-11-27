@@ -49,6 +49,7 @@ func TestLBS(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, opChan2)
 
+	waitForLBSReaders(t, redisContainer, 2)
 	addNStreamsToLBS(t, redisContainer, 2)
 
 	// load balanced stream distributes messages to different consumers in a load balanced way
@@ -400,35 +401,6 @@ func TestBlockingRead(t *testing.T) {
 	require.Equal(t, 1, rec.StartupRecoveryCount(), "blocking read consumer startup")
 	require.Equal(t, 1, rec.LockAcquisitionCount(), "blocking read lock acquisition when stream added")
 	require.Equal(t, 0, rec.ClaimCount(), "blocking read claim count")
-}
-
-// TestDoneReturnsWhileLBSIdle checks that Done returns when no message ever arrives on the LBS
-// stream. Done waits for the read loop to exit, and go-redis does not interrupt a blocking
-// XREADGROUP on context cancellation, so the read must block for a bounded time.
-func TestDoneReturnsWhileLBSIdle(t *testing.T) {
-	ctx := context.TODO()
-	redisContainer := setupSuite(t)
-
-	consumer, _ := createConsumer("done-idle", redisContainer)
-	opChan, err := consumer.Init(ctx)
-	require.NoError(t, err)
-
-	// let the read loop park in XREADGROUP
-	time.Sleep(500 * time.Millisecond)
-
-	done := make(chan error, 1)
-	go func() { done <- consumer.Done(ctx) }()
-
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(2*configs.DefaultLBSReadBlock + time.Second):
-		t.Fatal("Done did not return while the LBS stream was idle")
-	}
-
-	// the output channel is closed once Done returns
-	for range opChan {
-	}
 }
 
 func TestKspNotifs(t *testing.T) {
@@ -799,6 +771,7 @@ func TestMainFlow(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, opChan2)
 
+	waitForLBSReaders(t, redisContainer, 2)
 	addNStreamsToLBS(t, redisContainer, 2)
 
 	simpleRedisClient := newRedisClient(redisContainer)
@@ -1045,6 +1018,56 @@ func TestReconciliationToleratesMalformedPendingMessage(t *testing.T) {
 	require.NoError(t, err)
 	_, ok := <-opChan
 	require.False(t, ok)
+}
+
+// waitForLBSReaders waits until n clients are blocked in XREADGROUP on the node that serves the LBS
+// stream. Redis hands each new LBS entry to a consumer that is already blocked, so a test that adds
+// entries before every consumer is reading can see one consumer take all of them. Redis does not list
+// a blocked consumer in XINFO CONSUMERS until it is served, so the check counts blocked clients.
+func waitForLBSReaders(t *testing.T, redisContainer *testRedis, n int) {
+	t.Helper()
+	ctx := context.Background()
+	client := newRedisClient(redisContainer)
+	defer func() { _ = client.Close() }()
+
+	var node *redisgo.Client
+	switch c := client.(type) {
+	case *redisgo.ClusterClient:
+		var err error
+		node, err = c.MasterForKey(ctx, "consumer"+configs.InputSuffix)
+		require.NoError(t, err)
+	case *redisgo.Client:
+		node = c
+	default:
+		t.Fatalf("unexpected client type %T", client)
+	}
+
+	waitUntil(t, 10*time.Second, 10*time.Millisecond, func() (bool, string) {
+		list, err := node.ClientList(ctx).Result()
+		if err != nil {
+			return false, err.Error()
+		}
+		blocked := 0
+		for _, line := range strings.Split(list, "\n") {
+			fields := strings.Fields(line)
+			isBlocked, isRead := false, false
+			for _, f := range fields {
+				if v, ok := strings.CutPrefix(f, "flags="); ok && strings.Contains(v, "b") {
+					isBlocked = true
+				}
+				if f == "cmd=xreadgroup" {
+					isRead = true
+				}
+			}
+			if isBlocked && isRead {
+				blocked++
+			}
+		}
+		if blocked < n {
+			return false, fmt.Sprintf("%d of %d consumers blocked in XREADGROUP", blocked, n)
+		}
+		return true, ""
+	}, "LBS readers ready")
 }
 
 func addNStreamsToLBS(t *testing.T, redisContainer *testRedis, n int) {

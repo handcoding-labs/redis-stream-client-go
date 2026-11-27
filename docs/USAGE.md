@@ -329,33 +329,23 @@ client.Done(ctx)
 
 ### Shutdown and the Redis connection
 
-`Done()` cancels the client's context but does **not** close the Redis client you passed in; you
-own it. The consumer's blocking read on the LBS stream (`XREADGROUP ... BLOCK 0`) is not interrupted
-by canceling the context: it stays parked on the Redis server until its connection is closed.
+`Done()` stops the client and waits for its goroutines to exit, but does **not** close the Redis
+client you passed in; you own it.
 
-If a new LBS message arrives while a stopped consumer's read is still parked, Redis can hand the
-message to it (Redis serves blocked clients in the order they started blocking, so this is most
-likely for a consumer that has been waiting the longest). Nothing processes that message. It sits in
-the stopped consumer's pending list until the reconciliation scan notices it, which takes up to
-`RecoveryConfig.MinIdleTime` plus one `ReconciliationInterval` (about 30-90 seconds with the
-defaults), and it uses up one of the message's `RecoveryConfig.MaxRetries`. It is never processed
-twice, and it is recovered without intervention.
+The consumer reads the LBS stream with a blocking `XREADGROUP` on a dedicated connection. Canceling a
+context does not interrupt a blocking read in go-redis, so on shutdown the client sends
+`CLIENT UNBLOCK` for that connection, and the read returns at once. `Done()` returns within
+milliseconds, and once it returns no read of the stopped consumer is left parked on the server, so a
+new LBS message goes to a live consumer.
 
-This does not happen when a process dies (SIGKILL, OOM, pod eviction), because the operating system
-closes its connections. It only applies to a consumer that stops while its Redis connection stays
-open, for example while a process finishes its shutdown grace period or when consumers are stopped
-and started inside a long-running process.
-
-To avoid it, close the Redis client once `Done()` returns:
-
-```go
-<-sigChan
-client.Done(ctx)
-redisClient.Close() // closes the connection, which ends the parked read
-```
-
-If the Redis client is shared with other code and cannot be closed, give each stream client its own
-Redis client, or accept the bounded delay described above.
+`CLIENT UNBLOCK` is in the `@admin` ACL category. If your Redis user may not run it (some managed
+services deny it), the client logs a warning and reads with a bounded block of
+`configs.DefaultLBSReadBlock` (2s) instead. `Done()` then takes up to that long, and in that window a
+new LBS message can still be handed to the stopping consumer. Nothing processes it there; the
+reconciliation scan recovers it after `RecoveryConfig.MinIdleTime` (it uses up one of the message's
+`RecoveryConfig.MaxRetries` and is never processed twice). Allowing the user `client|unblock`, for
+example with `ACL SETUSER <user> +client|unblock`, avoids both. The same bounded reads are used with
+client types that cannot pin a connection to one node, such as `*redis.Ring`.
 
 ## Client ID
 

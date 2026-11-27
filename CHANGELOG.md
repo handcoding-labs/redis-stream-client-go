@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- `Done` interrupts the consumer's blocking LBS read with `CLIENT UNBLOCK` instead of waiting for it, so it returns within milliseconds and leaves no read parked on the server. The read runs on a dedicated connection in its own goroutine, separate from the goroutine that takes locks and sends notifications. Where `CLIENT UNBLOCK` is not permitted, the client logs a warning and falls back to reads bounded by `configs.DefaultLBSReadBlock`.
 - Shutdown could panic with "send on closed channel": `Done` closed the notification broker before cancelling the goroutines that send to it, and the broker closed its multi-sender input channel. `Done` now cancels and waits for every sender before closing the output channel, and the broker no longer closes its input channel.
 - `Done` no longer hangs while the LBS stream is idle. The LBS read used `Block: 0`, which go-redis does not interrupt on context cancellation; it now blocks for at most `configs.DefaultLBSReadBlock` (2s) per read, which also bounds shutdown latency.
 
@@ -68,8 +69,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 See [`docs/MIGRATION.md`](docs/MIGRATION.md) for upgrade steps.
 
 ### Known limitations
-- Canceling a client's context (or calling `Done()`) does not interrupt its blocking `XREADGROUP`
-  on the LBS stream, and `Done()` does not close the caller's Redis client. While that connection
-  stays open the stopped consumer can still be handed one newly added message, which is recovered by
-  the reconciliation scan after `MinIdleTime` and uses one retry. No message is processed twice.
-  Close the Redis client after `Done()`; see "Shutdown and the Redis connection" in `docs/USAGE.md`.
+- If the Redis user may not run `CLIENT UNBLOCK`, `Done()` can take up to `configs.DefaultLBSReadBlock` (2s), and a message added in that window can be handed to the stopping consumer. It is recovered by the reconciliation scan after `MinIdleTime` and uses one retry; it is never processed twice. See "Shutdown and the Redis connection" in `docs/USAGE.md`.

@@ -31,10 +31,20 @@ const (
 	DefaultInitialRetryDelay        = 100 * time.Millisecond
 	DefaultMaxRetryDelay            = 30 * time.Second
 
-	// DefaultLBSReadBlock bounds each blocking XREADGROUP on the LBS stream. go-redis does not
-	// interrupt a blocking read when its context is canceled, so this is also the upper bound on
-	// how long Done waits for the read loop to notice cancellation and exit.
+	// DefaultLBSReadBlock bounds each blocking XREADGROUP on the LBS stream when the read cannot be
+	// interrupted with CLIENT UNBLOCK (the command is not permitted, or the client type cannot pin a
+	// connection). go-redis does not interrupt a blocking read when its context is canceled, so this
+	// is then the upper bound on how long Done waits for the read to notice cancellation.
 	DefaultLBSReadBlock = DefaultHBInterval
+
+	// DefaultLBSInterruptibleReadBlock bounds each blocking XREADGROUP when the read can be
+	// interrupted with CLIENT UNBLOCK. Shutdown does not wait for it; it only limits how long a read
+	// that missed every unblock attempt can stay parked.
+	DefaultLBSInterruptibleReadBlock = 30 * time.Second
+
+	// LBSUnblockRetryInterval is how often CLIENT UNBLOCK is repeated after cancellation until the
+	// reader has exited.
+	LBSUnblockRetryInterval = 50 * time.Millisecond
 )
 
 // Reconciliation / recovery stream field names and DLQ markers (cluster support).

@@ -40,7 +40,9 @@ func (r *RecoverableRedisStreamClient) cleanup() error {
 	// cancel the context first so that routines start exiting and we wait for them
 	r.lbsCtxCancelFunc()
 
-	// wait for all routines to exit
+	// wait for all routines to exit; the reader's blocking read is interrupted with CLIENT UNBLOCK
+	// (or, where that is not permitted, ends within configs.DefaultLBSReadBlock)
+	r.reader.Wait()
 	r.senders.Wait()
 
 	// safe to close the output channel

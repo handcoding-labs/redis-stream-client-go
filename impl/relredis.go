@@ -82,6 +82,8 @@ type RecoverableRedisStreamClient struct {
 	oss ossSubscriptions
 	// senders is the wait group that controls all senders to notification broker
 	senders *sync.WaitGroup
+	// reader tracks the goroutine running the blocking LBS read, which never sends notifications
+	reader *sync.WaitGroup
 }
 
 // NewRedisStreamClient creates a new RedisStreamClient
@@ -129,6 +131,7 @@ func NewRedisStreamClient(redisClient redis.UniversalClient, serviceName string,
 		clusterMode:       ClusterModeSingleShard,
 		recoveryConfig:    DefaultRecoveryConfig(),
 		senders:           &sync.WaitGroup{},
+		reader:            &sync.WaitGroup{},
 		outputChanSize:    configs.DefaultOutputChanSize,
 	}
 
@@ -193,9 +196,15 @@ func (r *RecoverableRedisStreamClient) Init(ctx context.Context) (<-chan notifs.
 	// one routine listens to ksp notifications which is edge triggered system
 	// one routine that run reconciliation which is level triggered system
 
-	// start blocking read on LBS stream
+	// read the LBS stream: the reader only runs the blocking XREADGROUP (and is interrupted on
+	// shutdown), the processor takes locks and sends notifications
+	reads := make(chan lbsRead)
+	processed := make(chan struct{})
+	r.reader.Go(func() {
+		r.readLBS(newCtx, reads, processed)
+	})
 	r.senders.Go(func() {
-		r.readLBSStream(newCtx)
+		r.processLBSStream(newCtx, reads, processed)
 	})
 
 	// listen to ksp chan
